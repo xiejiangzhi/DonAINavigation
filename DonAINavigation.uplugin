@@ -19,7 +19,7 @@
 	[
 		{
 			"Name" : "DonAINavigation",
-			"Type" : "Developer"
+			"Type" : "Runtime"
 		}
 	]
 }
