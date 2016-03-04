@@ -23,6 +23,9 @@ Please visit the following page to grab it:
 
 http://www.drunkonnectar.com/3d-pathfinding-ue4/
 
+=============================================
+Overview and Tutorial
+=============================================
 [![Youtube video - Overview and Tutorial](http://www.drunkonnectar.com/wp-content/uploads/2016/03/ThumbnailWithYoutubeIcon.jpg)](https://www.youtube.com/watch?v=6Tr_K551zvI)
 
 =============================================
