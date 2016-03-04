@@ -15,7 +15,7 @@ The plugin provides the following:
 * A pathfinding API that advanced users can use for custom navigation queries from either Blueprints or C++
 
 =============================================
-Sample Project
+Download Sample Project
 =============================================
 I've created a sample project for you to quickly test the system and understand the different usecases it covers. 
 
