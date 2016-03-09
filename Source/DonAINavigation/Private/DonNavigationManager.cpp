@@ -270,6 +270,9 @@ void ADonNavigationManager::PostEditChangeProperty(FPropertyChangedEvent& Proper
 		if (bWorldBoundsChanged)
 		{
 			Debug_RecalculateWorldBounds();
+
+			//NAVVolumeData.ClearAll();
+			//ConstructBuilder();
 		}
 	}	
 
@@ -2323,7 +2326,8 @@ void ADonNavigationManager::VisualizeSolution(FVector source, FVector destinatio
 		ADonNavigationManager::VisualizeNAVResult(PathSolutionRaw, source, destination, true, DebugParams, FColor::Yellow);
 			
 	}
-	else if (DebugParams.VisualizeOptimizedPath)
+
+	if (DebugParams.VisualizeOptimizedPath)
 	{
 		ADonNavigationManager::VisualizeNAVResult(PathSolutionOptimized, source, destination, true, DebugParams, FColor::Black);
 	}
