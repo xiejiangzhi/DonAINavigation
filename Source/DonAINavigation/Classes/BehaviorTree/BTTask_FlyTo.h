@@ -51,7 +51,7 @@ struct FBT_FlyToTarget
 
 	FDonNavigationDynamicCollisionDelegate DynamicCollisionListener;
 
-	int32 solutionTraversalIndex = 1;	
+	int32 solutionTraversalIndex = 0;
 
 	FDoNNavigationQueryData QueryResults;
 
@@ -61,7 +61,7 @@ struct FBT_FlyToTarget
 
 	void Reset()
 	{	
-		solutionTraversalIndex = 1;
+		solutionTraversalIndex = 0;
 		QueryResults = FDoNNavigationQueryData();
 		QueryParams = FDoNNavigationQueryParams();
 		Metadata = FBT_FlyToTarget_Metadata();
