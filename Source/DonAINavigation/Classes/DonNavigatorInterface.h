@@ -17,14 +17,14 @@
 #include "DonNavigatorInterface.generated.h"
 
 UINTERFACE()
-class UDonNavigator : public UInterface
+class DONAINAVIGATION_API UDonNavigator : public UInterface
 {
 	GENERATED_UINTERFACE_BODY()
 };
 
 struct FDonVoxelCollisionProfile;
 
-class IDonNavigator
+class DONAINAVIGATION_API IDonNavigator
 {
 	GENERATED_IINTERFACE_BODY()
 	
@@ -33,5 +33,17 @@ class IDonNavigator
 
 	/* Optional custom movement input. If not provided, default AddMovementInput behavior will be called on the pawn or character*/
 	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
-	void AddMovementInputCustom(FVector WorldDirection, float ScaleValue);
+	void AddMovementInputCustom(FVector WorldDirection, float ScaleValue);	
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	void OnLocomotionBegin();
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	void OnLocomotionEnd();
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	void OnLocomotionAbort();
+
+	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	void OnNextSegment(FVector NextPoint);	
 };

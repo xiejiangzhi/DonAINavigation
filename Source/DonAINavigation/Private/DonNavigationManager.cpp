@@ -51,7 +51,7 @@ ADonNavigationManager::ADonNavigationManager(const FObjectInitializer& ObjectIni
 	WorldBoundaryVisualizer->AttachTo(RootComponent);	
 	WorldBoundaryVisualizer->SetVisibility(bDisplayWorldBoundary);
 	WorldBoundaryVisualizer->SetHiddenInGame(true);	
-	WorldBoundaryVisualizer->SetCollisionObjectType(ECC_Pawn);
+	WorldBoundaryVisualizer->SetCollisionProfileName(FName("NoCollision"));
 	Debug_RecalculateWorldBounds();
 
 	VoxelSize = 100;
@@ -212,7 +212,10 @@ void ADonNavigationManager::BeginPlay()
 	VoxelCollisionShape = FCollisionShape::MakeBox(NavVolumeExtent());
 
 	VoxelCollisionQueryParams = FCollisionQueryParams(FName("GenerateNavigationVolumePixels", false)); // trace complex = false	
-	VoxelCollisionQueryParams.AddIgnoredActors(ActorsToIgnoreForCollision);
+	VoxelCollisionQueryParams.AddIgnoredActors(ActorsToIgnoreForCollision);	
+
+	VoxelCollisionQueryParams2 = FCollisionQueryParams(VoxelCollisionQueryParams);
+	VoxelCollisionQueryParams2.bFindInitialOverlaps = false;
 
 	for (auto collisionChannel : ObstacleQueryChannels)
 		VoxelCollisionObjectParams.AddObjectTypesToQuery(collisionChannel);
@@ -533,7 +536,7 @@ static FString GetMeshAssetName(UPrimitiveComponent* Mesh)
 	return assetName;
 }
 
-static FString GetMeshLogIdentifier(UPrimitiveComponent* Mesh)
+FString ADonNavigationManager::GetMeshLogIdentifier(UPrimitiveComponent* Mesh)
 {
 	if (!Mesh)
 		return FString("?");
@@ -544,10 +547,10 @@ static FString GetMeshLogIdentifier(UPrimitiveComponent* Mesh)
 	return meshLog;
 }
 
-FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy/* = false*/, FName CustomCacheIdentifier/* = NAME_None*/, bool bReloadCollisionCache/* = false*/, bool bUseCheapBoundsCollision/* = false*/, float BoundsScaleFactor/* = 1.f*/, bool DrawDebug/* = false*/)
+FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy /*= false*/, bool bDisableCacheUsage /*= false*/, FName CustomCacheIdentifier /*= NAME_None*/, bool bReloadCollisionCache /*= false*/, bool bUseCheapBoundsCollision /*= false*/, float BoundsScaleFactor /*= 1.f*/, bool DrawDebug /*= false*/)
 {
 	// Does the collision cache have an entry for this mesh?	
-	if (!bReloadCollisionCache && VoxelCollisionProfileCache.Contains(MeshId))
+	if (!bDisableCacheUsage && !bReloadCollisionCache && VoxelCollisionProfileCache.Contains(MeshId))
 	{
 		bResultIsValid = true;
 
@@ -558,10 +561,10 @@ FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMes
 		auto collisionData = SampleVoxelCollisionForMesh(MeshId.Mesh.Get(), bResultIsValid, bIgnoreMeshOriginOccupancy, CustomCacheIdentifier, bUseCheapBoundsCollision, BoundsScaleFactor, DrawDebug);
 
 		// Add to cache:
-		if (bResultIsValid)
+		if (bResultIsValid && !bDisableCacheUsage)
 		{
 			VoxelCollisionProfileCache.Add(MeshId, collisionData);
-		}		
+		}
 
 		return collisionData;
 	}
@@ -682,7 +685,8 @@ FDonVoxelCollisionProfile ADonNavigationManager::SampleVoxelCollisionForMesh(UPr
 
 }
 
-bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* Mesh, FDonCollisionSamplerCallback ResultHandler, FName CustomCacheIdentifier/* = NAME_None*/, bool bReplaceExistingTask/* = false*/, bool bReloadCollisionCache/* = false*/, bool bUseCheapBoundsCollision/* = false*/, float BoundsScaleFactor/* = 1.f*/, bool bForceSynchronousExecution/* = false*/, bool bDrawDebug/* = false*/)
+// @todo: group this giant list of optional arguments into a nice struct...
+bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* Mesh, FDonCollisionSamplerCallback ResultHandler, FName CustomCacheIdentifier /*= NAME_None*/, bool bReplaceExistingTask /*= false*/, bool bDisableCacheUsage /*= false*/, bool bReloadCollisionCache /*= false*/, bool bUseCheapBoundsCollision /*= false*/, float BoundsScaleFactor /*= 1.f*/, bool bForceSynchronousExecution /*= false*/, bool bDrawDebug /*= false*/)
 {
 	// Input validations
 	if (!Mesh || Mesh->GetCollisionProfileName().IsEqual(FName("NoCollision")))
@@ -703,7 +707,7 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 	
 	// Prepare task
 	auto meshId = FDonMeshIdentifier(Mesh, CustomCacheIdentifier);
-	FDonNavigationDynamicCollisionTask task(meshId, ResultHandler, *meshOriginVolume, bReloadCollisionCache, bUseCheapBoundsCollision, BoundsScaleFactor, bDrawDebug);
+	FDonNavigationDynamicCollisionTask task(meshId, ResultHandler, *meshOriginVolume, bDisableCacheUsage, bReloadCollisionCache, bUseCheapBoundsCollision, BoundsScaleFactor, bDrawDebug);
 
 	if (!bReplaceExistingTask && IsDynamicCollisionTaskActive(task))
 	{
@@ -712,11 +716,23 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 		return false;
 	}
 
+	const bool bIgnoreMeshOriginOccupancy = false;
+
 	if (bForceSynchronousExecution)
 	{
-		UE_LOG(DoNNavigationLog, Verbose, TEXT("Forced synchronous execution of dynamic collision updates for %s (%s) in progress..."), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
+		UE_LOG(DoNNavigationLog, Verbose, TEXT("Forced synchronous execution of dynamic collision updates for %s (%s) in progress..."), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());		
+		
+		bool bResultIsValid = false;
+		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(meshId, bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, bDrawDebug);
 
-		DynamicCollisionUpdateForMesh(task.MeshId, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, task.bDrawDebug);
+		if (!bResultIsValid)
+		{
+			UE_LOG(DoNNavigationLog, Log, TEXT("Synchronous voxel update for Mesh %s (%s) failed, voxel collisions could not be sampled. "), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
+
+			return false;
+		}
+
+		DynamicCollisionUpdateForMesh(task.MeshId, VoxelCollisionProfile, task.bDisableCacheUsage, task.bDrawDebug);
 
 		task.ResultHandler.ExecuteIfBound(true);
 
@@ -724,7 +740,7 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 	}
 
 	// Does the collision cache have an entry for this mesh?
-	if (!bReloadCollisionCache && VoxelCollisionProfileCache.Contains(meshId))
+	if (!bDisableCacheUsage && !bReloadCollisionCache && VoxelCollisionProfileCache.Contains(meshId))
 	{
 		task.FetchSuccess();
 
@@ -733,7 +749,17 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 	// Are we using cheap bounds collision?
 	else if (bUseCheapBoundsCollision)
 	{	
-		DynamicCollisionUpdateForMesh(task.MeshId, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, task.bDrawDebug);
+		bool bResultIsValid = false;
+		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(meshId, bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, bDrawDebug);
+
+		if (!bResultIsValid)
+		{
+			UE_LOG(DoNNavigationLog, Log, TEXT("Cheap bounds voxel update for Mesh %s (%s) failed, voxel collisions could not be sampled. "), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
+
+			return false;
+		}
+
+		DynamicCollisionUpdateForMesh(task.MeshId, VoxelCollisionProfile, task.bDisableCacheUsage, task.bDrawDebug);
 
 		UE_LOG(DoNNavigationLog, Verbose, TEXT("Dynamic collision updates using cheap bounds collision complete for mesh: %s (%s)"), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
 
@@ -747,9 +773,9 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 		// Add bounds data to the task	
 		FVector meshExtents = Mesh->Bounds.BoxExtent * BoundsScaleFactor;		
 		task.MeshOriginalExtents = meshExtents;
-		task.xLength = meshExtents.X * 2 / VoxelSize;
-		task.yLength = meshExtents.Y * 2 / VoxelSize;
-		task.zLength = meshExtents.Z * 2 / VoxelSize;
+		task.xLength = meshExtents.X * 2 / VoxelSize + 1;
+		task.yLength = meshExtents.Y * 2 / VoxelSize + 1;
+		task.zLength = meshExtents.Z * 2 / VoxelSize + 1;
 
 		// Store collision params		
 		task.ObjectParams.AddObjectTypesToQuery(Mesh->GetCollisionObjectType());
@@ -814,10 +840,10 @@ void ADonNavigationManager::TickVoxelCollisionSampler(FDonNavigationDynamicColli
 	int32 samplerCoordsY = (int32) meshMinBoundsCoords.Y + Task.j;
 	int32 samplerCoordsZ = (int32) meshMinBoundsCoords.Z + Task.k;
 
-	auto& volumeToCheck = VolumeAtUnsafe(samplerCoordsX, samplerCoordsY, samplerCoordsZ);
+	auto volumeToCheck = VolumeAtSafe(samplerCoordsX, samplerCoordsY, samplerCoordsZ);	
 	auto currentMeshOriginVolume = VolumeAt(mesh->GetComponentLocation());
 
-	if (!currentMeshOriginVolume)
+	if (!currentMeshOriginVolume || !volumeToCheck)
 	{
 		Task.FetchFailure();
 
@@ -825,10 +851,10 @@ void ADonNavigationManager::TickVoxelCollisionSampler(FDonNavigationDynamicColli
 	}	
 
 	// Draw every volume sampled:
-	//if (Task.bDrawDebug) DrawDebugVoxel_Safe(GetWorld(), volumeToCheck.Location, NavVolumeExtent(), FColor::Black, true, 0, 0, DebugVoxelsLineThickness);
+	//if (Task.bDrawDebug) DrawDebugVoxel_Safe(GetWorld(), volumeToCheck->Location, NavVolumeExtent(), FColor::Black, true, 0, 0, DebugVoxelsLineThickness);
 
 	TArray<FOverlapResult> outOverlaps;
-	bool const bHit = GetWorld()->OverlapMultiByObjectType(outOverlaps, volumeToCheck.Location, FQuat::Identity, Task.ObjectParams, VoxelCollisionShape, Task.CollisionParams);
+	bool const bHit = GetWorld()->OverlapMultiByObjectType(outOverlaps, volumeToCheck->Location, FQuat::Identity, Task.ObjectParams, VoxelCollisionShape, Task.CollisionParams);
 
 	for (const auto& overlap : outOverlaps)
 	{
@@ -860,7 +886,8 @@ void ADonNavigationManager::TickVoxelCollisionSampler(FDonNavigationDynamicColli
 	{
 		Task.FetchSuccess();
 
-		VoxelCollisionProfileCache.Add(Task.MeshId, Task.CollisionData);	
+		if(!Task.bDisableCacheUsage)
+			VoxelCollisionProfileCache.Add(Task.MeshId, Task.CollisionData);	
 
 		if (Task.bDrawDebug)
 		{
@@ -926,7 +953,7 @@ void ADonNavigationManager::TickScheduledCollisionTasks(float DeltaSeconds, int3
 		{
 			if (task.MeshId.Mesh.IsValid() && task.bCollisionFetchSuccess)
 			{
-				DynamicCollisionUpdateForMesh(task.MeshId, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, task.bDrawDebug);
+				DynamicCollisionUpdateForMesh(task.MeshId, task.CollisionData, task.bDisableCacheUsage, task.bDrawDebug);
 
 				UE_LOG(DoNNavigationLog, Verbose, TEXT("Dynamic collision updates complete for mesh: %s (%s) in %f seconds"), *task.MeshAssetName, *task.MeshId.UniqueTag.ToString(), task.TimeTaken);
 				
@@ -986,17 +1013,17 @@ void ADonNavigationManager::CompleteCollisionTask(FDonNavigationDynamicCollision
 	
 }
 
-void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifier& MeshId, FName CustomCacheIdentifier/* = NAME_None*/, bool bReloadCollisionCache/* = false*/, bool bUseCheapBoundsCollision/* = false*/, float BoundsScaleFactor/* = 1.f*/, bool bDrawDebug/* = false*/)
+void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifier& MeshId, FDonVoxelCollisionProfile& VoxelCollisionProfile, bool bDisableCacheUsage/* = false*/, bool bDrawDebug/* = false*/)
 {	
 	//SCOPE_CYCLE_COUNTER(STAT_DynamicCollisionUpdates);
 
-	bool bResultIsValid = false;
+	/*bool bResultIsValid = false;
 	const bool bIgnoreMeshOriginOccupancy = false;
-	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(MeshId, bResultIsValid, bIgnoreMeshOriginOccupancy, CustomCacheIdentifier, bReloadCollisionCache, bUseCheapBoundsCollision, BoundsScaleFactor, bDrawDebug);
-
-	if (!bResultIsValid || !MeshId.Mesh.IsValid())
+	auto VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(MeshId, bResultIsValid, bIgnoreMeshOriginOccupancy, CustomCacheIdentifier, bReloadCollisionCache, bUseCheapBoundsCollision, BoundsScaleFactor, bDrawDebug);*/
+	
+	if (!MeshId.Mesh.IsValid())
 	{
-		UE_LOG(DoNNavigationLog, Error, TEXT("Failed to voxel collision profile for %s(%s) from DynamicCollisionUpdateForMesh OR mesh was invalid. Skipping dynamic collision updates..."), *MeshId.UniqueTag.ToString(), *CustomCacheIdentifier.ToString());
+		UE_LOG(DoNNavigationLog, Error, TEXT("Invalid mesh. Skipping dynamic collision updates..."), *MeshId.UniqueTag.ToString());
 
 		return;
 	}
@@ -1017,41 +1044,44 @@ void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifi
 	
 	// @todo: combine both loops (O(N2)) into a single loop possibly backed by a TSet for quick lookup of WorldVoxelsOccupied. Subsequently, perform high-volume profiling to verify actual performance benefits
 
-	const int32 numVoxels = voxelCollisionProfile.RelativeVoxelOccupancy.Num();
+	const int32 numVoxels = VoxelCollisionProfile.RelativeVoxelOccupancy.Num();
 
 	// Flush out occupancy from previously occupied voxels:
-	for (auto volume : voxelCollisionProfile.WorldVoxelsOccupied)
+	for (auto volume : VoxelCollisionProfile.WorldVoxelsOccupied)
 	{
 		volume->SetNavigability(true);
 
 		// Draw free'd voxels //if (bDrawDebug) DrawDebugVoxel_Safe(GetWorld(), volume->Location, NavVolumeExtent(), FColor::Green, true, 0, 0, DebugVoxelsLineThickness);
 	}	
 
-	voxelCollisionProfile.WorldVoxelsOccupied.Empty(numVoxels);
+	VoxelCollisionProfile.WorldVoxelsOccupied.Empty(numVoxels);
 
 	TArray<FDonNavigationVoxel*> newSpaceOccupied;
 	newSpaceOccupied.Reserve(numVoxels);	
 
 	// and move onto occupy the newly visited voxels:
-	for (const auto& offset : voxelCollisionProfile.RelativeVoxelOccupancy)
+	for (const auto& offset : VoxelCollisionProfile.RelativeVoxelOccupancy)
 	{
-		auto& volume = VolumeAtUnsafe(meshOriginVolume->X + offset.X, meshOriginVolume->Y + offset.Y, meshOriginVolume->Z + offset.Z);
-		auto bPreviouslyNavigable = volume.CanNavigate();
+		auto volume = VolumeAtSafe(meshOriginVolume->X + offset.X, meshOriginVolume->Y + offset.Y, meshOriginVolume->Z + offset.Z);
+		if (!volume)
+			continue;
 
-		volume.SetNavigability(false);
-		voxelCollisionProfile.WorldVoxelsOccupied.Add(&volume);
+		auto bPreviouslyNavigable = volume->CanNavigate();
+
+		volume->SetNavigability(false);
+		VoxelCollisionProfile.WorldVoxelsOccupied.Add(volume);
 
 		// For reasons that I don't yet understand, using bPreviouslyNavigable to optimize the number of delegates we check for doesn't work 100% right.
 		// There are edge cases where it causes us to miss out on valuable dynamic collision udpates that we truly need to listen to. 
 		// For now I'm commenting it out as both are logically equivalent; filtering is more efficient though.
 		//if (bPreviouslyNavigable)
 		{
-			newSpaceOccupied.Add(&volume); // We don't broadcast directly from here anymore to account for potential side-effects introduced by the delegate owner
+			newSpaceOccupied.Add(volume); // We don't broadcast directly from here anymore to account for potential side-effects introduced by the delegate owner
 		}
 
 		// Draw occupied voxels
 		if (bDrawDebug)
-			DrawDebugVoxel_Safe(GetWorld(), volume.Location, NavVolumeExtent(), FColor::Red, false, 0.13f, 0, DebugVoxelsLineThickness);
+			DrawDebugVoxel_Safe(GetWorld(), volume->Location, NavVolumeExtent(), FColor::Red, false, 0.13f, 0, DebugVoxelsLineThickness);
 	}
 
 	// Broadcast dynamic collision updates!
@@ -1068,7 +1098,8 @@ void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifi
 	
 
 	// Update the cache with latest occupany data:
-	VoxelCollisionProfileCache.Add(MeshId, voxelCollisionProfile);
+	if(!bDisableCacheUsage)
+		VoxelCollisionProfileCache.Add(MeshId, VoxelCollisionProfile);
 }
 
 void ADonNavigationManager::Debug_ToggleWorldBoundaryInGame()
@@ -1139,12 +1170,13 @@ void ADonNavigationManager::Debug_DrawVoxelCollisionProfile(UPrimitiveComponent*
 	bool bResultIsValid;
 	bool bIgnoreMeshOriginOccupancy = false;
 	FName CustomCacheIdentifier = FName();
+	bool bDisableCacheUsage = false;
 	bool bReloadCollisionCache = false;
 	bool bUseCheapBoundsCollision = false;
 	float boundsScaleFactor = 1.f;
 	bool bDrawDebug = false;
-	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(MeshOrPrimitive), bResultIsValid, bIgnoreMeshOriginOccupancy, CustomCacheIdentifier,
-																	bReloadCollisionCache, bUseCheapBoundsCollision, boundsScaleFactor, bDrawDebug);
+	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(MeshOrPrimitive), bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage,
+																	CustomCacheIdentifier, bReloadCollisionCache, bUseCheapBoundsCollision, boundsScaleFactor, bDrawDebug);
 
 	auto meshOriginVolume = VolumeAt(MeshOrPrimitive->GetComponentLocation());
 	if (!meshOriginVolume)
@@ -1189,9 +1221,8 @@ bool ADonNavigationManager::IsDirectPathLineSweep(UPrimitiveComponent* Collision
 		if (IsDirectPathSweep(CollisionComponent, Start, End, OutHit, bFindInitialOverlaps, CollisionShapeInflation))
 			return true;
 	}
-		
+
 	return false;
-	
 }
 
 bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComponent, FVector Start, FVector End,FHitResult &OutHit, bool bFindInitialOverlaps/* = false*/, float CollisionShapeInflation/* = 0.f*/)
@@ -1202,6 +1233,8 @@ bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComp
 	const bool bTraceComplex = false;
 	FComponentQueryParams collisionParams(FName("IsDirectPathSweep"), bTraceComplex);
 	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
+	collisionParams.IgnoreComponents = VoxelCollisionQueryParams.IgnoreComponents;
+	collisionParams.AddIgnoredComponent(CollisionComponent);
 
 	if (CollisionShapeInflation == 0.f)
 	{
@@ -1212,13 +1245,9 @@ bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComp
 		// Prepare inflated collision shape
 		const FCollisionShape& collisionShape = CollisionComponent->GetCollisionShape(CollisionShapeInflation);
 
-		FCollisionObjectQueryParams objectParams;
-		for (auto channel : ObstacleQueryChannels)
-			objectParams.AddObjectTypesToQuery(channel);		
-
 		collisionParams.AddIgnoredActor(CollisionComponent->GetOwner());
 		
-		bHit = GetWorld()->SweepMultiByObjectType(OutHits, Start, End, FQuat::Identity, objectParams, collisionShape, collisionParams);
+		bHit = GetWorld()->SweepMultiByObjectType(OutHits, Start, End, FQuat::Identity, VoxelCollisionObjectParams, collisionShape, collisionParams);
 	}
 
 	// Check results:
@@ -1226,42 +1255,70 @@ bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComp
 	if (!bHit)
 		return true;
 
-	for (const auto& hit : OutHits)
+	OutHit = OutHits.Last();
+	UE_LOG(DoNNavigationLog, Verbose, TEXT("Optimizer hit %s-%s"), OutHit.GetActor() ? *OutHit.GetActor()->GetName() : *FString(), OutHit.GetComponent() ? *OutHit.GetComponent()->GetName() : *FString());
+
+	/*for (const auto& hit : OutHits)
 	{
 		// @todo: OutHits.Last() _should_ directly give us the blocking hit. However before making this change I want long-term testing results to emerge, especially vis-a-vis usage of bFindInitialOverlaps
 		if (hit.bBlockingHit)
 		{
 			OutHit = hit;
 
-			UE_LOG(DoNNavigationLog, Verbose, TEXT("Optimizer hit %s-%s"), hit.GetActor() ? *hit.GetActor()->GetName() : *FString(), hit.GetComponent() ? *hit.GetComponent()->GetName() : *FString());
-
 			break;
 		}
-	}
+	}*/
 
 	return false;
 }
 
-bool ADonNavigationManager::IsDirectPathLineTrace(FVector start, FVector end, FHitResult &OutHit, TArray<AActor*> ActorsToIgnore)
-{	
-	/*TArray<TEnumAsByte<EObjectTypeQuery>> objectTypeQuery;
-	objectTypeQuery.Add(UEngineTypes::ConvertToObjectType(ECC_WorldStatic));
-	objectTypeQuery.Add(UEngineTypes::ConvertToObjectType(ECC_WorldDynamic));
-	
-	bool hitSomething = UKismetSystemLibrary::LineTraceSingleForObjects(GetWorld(), start, end, objectTypeQuery, false, ActorsToIgnore, EDrawDebugTrace::None, OutHit, true);
-	*/
-
-	const bool bTraceComplex = false;
-	FCollisionQueryParams collisionParams(FName("DonNavigation-IsDirectPathLineTrace"), bTraceComplex);
+bool ADonNavigationManager::IsDirectPathLineTrace(FVector start, FVector end, FHitResult &OutHit, const TArray<AActor*> &ActorsToIgnore, bool bFindInitialOverlaps/* = true*/)
+{
+	FCollisionQueryParams collisionParams(VoxelCollisionQueryParams);
 	collisionParams.AddIgnoredActors(ActorsToIgnore);
+	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps;
 
-	FCollisionObjectQueryParams objectParams;
-	for (auto channel : ObstacleQueryChannels)
-		objectParams.AddObjectTypesToQuery(channel);
-
-	bool const bHit = GetWorld()->LineTraceSingleByObjectType(OutHit, start, end, objectParams, collisionParams);
+	bool const bHit = GetWorld()->LineTraceSingleByObjectType(OutHit, start, end, VoxelCollisionObjectParams, collisionParams);
 
 	return !bHit;
+}
+
+// Shape based tracing:
+
+bool ADonNavigationManager::IsDirectPathLineSweepShape(const FCollisionShape& Shape, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps/* = false*/)
+{
+	TArray<AActor*> actorsToIgnore;
+	
+	if (IsDirectPathLineTrace(Start, End, OutHit, actorsToIgnore, bFindInitialOverlaps))
+	{
+		if (IsDirectPathSweepShape(Shape, Start, End, OutHit, bFindInitialOverlaps))
+			return true;
+	}
+
+	return false;
+
+}
+
+bool ADonNavigationManager::IsDirectPathSweepShape(const FCollisionShape& Shape, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps/* = false*/)
+{
+	bool bHit;
+	TArray<FHitResult> OutHits;
+
+	const bool bTraceComplex = false;
+	FComponentQueryParams collisionParams(FName("IsDirectPathSweepShape"), bTraceComplex);
+	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
+	collisionParams.IgnoreComponents = VoxelCollisionQueryParams.IgnoreComponents;	
+
+	bHit = GetWorld()->SweepMultiByObjectType(OutHits, Start, End, FQuat::Identity, VoxelCollisionObjectParams, Shape, collisionParams);
+
+	// Check results:
+
+	if (!bHit)
+		return true;
+
+	OutHit = OutHits.Last();
+	
+	return false;
 }
 
 void ADonNavigationManager::OptimizePathSolution_Pass1_LineTrace(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation/* = 0.f*/)
@@ -1408,7 +1465,7 @@ FDonNavigationVoxel* ADonNavigationManager::GetBestNeighborRecursive(FDonNavigat
 	return NULL;		
 }
 
-FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Location, UPrimitiveComponent* CollisionComponent, float CollisionShapeInflation/* = 0.f;*/, bool bShouldSweep/* = true*/)
+FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Location, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation/* = 0.f;*/, bool bShouldSweep/* = true*/)
 {
 	if (bShouldSweep && !CollisionComponent)
 		return NULL;
@@ -1435,6 +1492,7 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	FHitResult hit;
 
 	bool bConsiderInitialOverlaps = true; // This is really important to understand.
+
 	//
 	// Rationale:
 
@@ -1446,8 +1504,30 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	// that is tagged not navigable (that is why this function was written, after all) but if you're colliding with another object while starting the query chances are this function
 	// never find the "closest navigable neighbor" and your pathfinding request will simply fail.
 	//
-	// @todo: reject pathfinding requests that do not meet this criteria so that pawns are forced to steady themselves first before issuing a pathing request.
+	// @todo: reject pathfinding requests that do not meet this criteria instantly so that pawns are forced to steady themselves first before issuing a pathing request
+	// and also so we avoid all the checks below which will be redundant for pawns with initial overlaps.
 
+	//bInitialPositionCollides = IsDirectPathLineSweep(CollisionComponent, Location, volume->Location, hit, bConsiderInitialOverlaps, CollisionShapeInflation);
+	TArray<FOverlapResult> outOverlaps;	
+
+	/*const bool bTraceComplex = false;
+	FComponentQueryParams collisionParams(FName("GetClosestNavigableVolume"), bTraceComplex);
+	collisionParams.bFindInitialOverlaps = bConsiderInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
+	collisionParams.IgnoreComponents = VoxelCollisionQueryParams.IgnoreComponents;
+	collisionParams.AddIgnoredComponent(CollisionComponent);
+	bInitialPositionCollides = GetWorld()->ComponentOverlapMulti(outOverlaps, CollisionComponent, Location, FQuat::Identity, collisionParams);*/
+
+	if (bShouldSweep)
+	{
+		FCollisionObjectQueryParams objectParams = VoxelCollisionObjectParams;
+		objectParams.AddObjectTypesToQuery(CollisionComponent->GetCollisionObjectType());
+		FCollisionQueryParams queryParams = VoxelCollisionQueryParams;
+		queryParams.AddIgnoredComponent(CollisionComponent);
+		bInitialPositionCollides = GetWorld()->OverlapMultiByObjectType(outOverlaps, Location, FQuat::Identity, objectParams, CollisionComponent->GetCollisionShape(1.f), queryParams);
+
+		if (bInitialPositionCollides)
+			return NULL;
+	}
 
 	// 2 a) First we start with simple heuristics based checks for the closest accessible neighbor:
 	static const int32 neighborGuessList = 9;
@@ -1479,10 +1559,67 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	const int32 neighborSearchMaxDepth = 2;
 	auto result = GetBestNeighborRecursive(volume, 0, neighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep);	
 
+	if (result)
+		return result;
+
+	// No solution:
+
 	UE_LOG(DoNNavigationLog, Error, TEXT("Error: GetClosestNavigableVolume failed to resolve a given volume."));
 
+#if WITH_EDITOR
+	DrawDebugSphere_Safe(GetWorld(), Location, 64.f, 6.f, FColor::Magenta, true, -1.f);
+	DrawDebugPoint_Safe(GetWorld(), Location, 6.f, FColor::Yellow, true, -1.f);
+#endif // WITH_EDITOR	
+	
  	return result;
 }
+
+FDonNavigationVoxel* ADonNavigationManager::ResolveVector(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal /*= true*/, float CollisionShapeInflation /*= 0.f*/, bool bShouldSweep /*= true*/)
+{
+	bool bInitialPositionCollides;
+	auto volume = GetClosestNavigableVolume(DesiredLocation, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);
+
+	const int32 numTweaks = 6;
+	FVector locationTweaks[numTweaks] = { FVector(0, 0,  1), FVector( 1, 0, 0), FVector(0,  1, 0),
+										  FVector(0, 0, -1), FVector(-1, 0, 0), FVector(0, -1, 0)
+	};	
+
+	float tweakMagnitudes[3] = { 20, 40, 60 }; // *FMath::FRandRange(0.5f, 2.f);
+
+	if (volume)
+		return volume; // success
+
+
+	// Failure handling:
+
+	if (bFlexibleOriginGoal) // we could filter this adaptation to only consider bInitialPositionCollides scenarios, but there are some edge cases which aren't covered with that approach
+	{
+		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
+
+		for (auto tweakMagnitude : tweakMagnitudes)
+		{
+			for (const auto& tweakDir : locationTweaks)
+			{
+				FVector tweak = tweakDir * tweakMagnitude;
+
+				volume = GetClosestNavigableVolume(DesiredLocation + tweak, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);
+
+				if (volume)
+				{
+					UE_LOG(DoNNavigationLog, Warning, TEXT("Substitute Origin or Destination (%s offset) is being used for pawn to overcome initial overlap. (Can be disabled in QueryParams)"), *tweak.ToString());
+
+					DesiredLocation = DesiredLocation + tweak;
+
+					return volume; // success
+				}
+			}
+		}		
+	}
+	
+	return NULL;
+}
+
+
 
 bool ADonNavigationManager::CanNavigate(FDonNavigationVoxel* Volume)
 {
@@ -1510,10 +1647,10 @@ bool ADonNavigationManager::CanNavigateByCollisionProfile(FDonNavigationVoxel* V
 }
 
 void ADonNavigationManager::ExpandFrontierTowardsTarget(FDonNavigationQueryTask& Task, FDonNavigationVoxel* Current, FDonNavigationVoxel* Neighbor)
-{
+{	
 	if (!CanNavigateByCollisionProfile(Neighbor, Task.Data.VoxelCollisionProfile))
 		return;
-	
+
 	// In reality there are two possible segment distances: side and sqrt(2) * side. As a trade-off between accuracy and performance we're assuming all segments to be only equal to the pixel size (majority case are 6-DOF neighbors)
 	float SegmentDist = VoxelSizeSquared; // Alternate: FVector::DistSquared(Current->Location, Neighbor->Location);
 	
@@ -1532,23 +1669,43 @@ void ADonNavigationManager::ExpandFrontierTowardsTarget(FDonNavigationQueryTask&
 	}
 }
 
-static void InvalidVolumeErrorLog(FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationDestination, FVector Origin, FVector Destination)
+void ADonNavigationManager::InvalidVolumeErrorLog(FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationDestination, FVector Origin, FVector Destination)
 {
+	bool bLogHelpInfo = true;
+	FVector vectorInQuestion;
+
 	if (!OriginVolume)
+	{
+		vectorInQuestion = Origin;
+
 		UE_LOG(DoNNavigationLog, Error, TEXT("Error: Invalid Origin (%s) passed to navigation path solver"), *Origin.ToString());
+	}
 
 	if (!DestinationDestination)
-		UE_LOG(DoNNavigationLog, Error, TEXT("Error: Invalid Destination (%s) passed to navigation path solver"), *Destination.ToString());
+	{
+		vectorInQuestion = Destination;
 
-	FString message  =  FString("Rules for passing vectors to the system:\n");
-	message         +=  FString("----------------------------------------\n");
-	message         +=  FString("1. Origin and Destination points _must_ be in empty space. They cannot be inside any mesh or right on top of a floor with colliders\n");
-	message         +=  FString("--\n");
-	message         +=  FString("2. Characters and Pawns however, are allowed to use their collision component as origin or destination, but the character Mesh itself must _not_ be configured as BlockAll or BlockAllDynamic.\n");
-	message		    +=  FString("You can use the default \"Pawn\" collision profile (default) for character meshes as long as you haven't added it to the ObstacleQueryChannels list in your Don Navigation Manager actor\n");
-	message         +=  FString("--\n");
-	message		    +=  FString("3. Trigger volumes cannot the same object type as obstacles (don't use WorldStatic/WorldDynamic/etc). The reason for this is that the system uses overlaps instead of sweeps for optimal performance.\n");
-	message		    +=  FString("Please create a new trigger object type for all triggers in your map and use that to avoid trigger volumes being from picked up as obstacles.\n");
+		UE_LOG(DoNNavigationLog, Error, TEXT("Error: Invalid Destination (%s) passed to navigation path solver"), *Destination.ToString());
+	}
+
+	// Troubleshooting instructions already logged for this vector? If so, return to avoid swamping logs
+	if (UnresolvableVectors.Contains(vectorInQuestion))
+		bLogHelpInfo = false;
+	else
+		UnresolvableVectors.Add(vectorInQuestion);
+	
+	if (!bLogHelpInfo)
+		return;
+
+	FString message = FString("Rules for passing vectors to the system:\n");
+	message += FString("----------------------------------------\n");
+	message += FString("1. Origin and Destination points _must_ be in empty space. They cannot be inside any mesh or right on top of a floor with colliders\n");
+	message += FString("--\n");
+	message += FString("2. Characters and Pawns however, are allowed to use their collision component as origin or destination, but the character Mesh itself must _not_ be configured as BlockAll or BlockAllDynamic.\n");
+	message += FString("You can use the default \"Pawn\" collision profile (default) for character meshes as long as you haven't added it to the ObstacleQueryChannels list in your Don Navigation Manager actor\n");
+	message += FString("--\n");
+	message += FString("3. Trigger volumes cannot the same object type as obstacles (don't use WorldStatic/WorldDynamic/etc). The reason for this is that the system uses overlaps instead of sweeps for optimal performance.\n");
+	message += FString("Please create a new trigger object type for all triggers in your map and use that to avoid trigger volumes being from picked up as obstacles.\n");
 
 	UE_LOG(DoNNavigationLog, Warning, TEXT("%s"), *message);
 }
@@ -1592,10 +1749,9 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 
 	uint64 timerVolumeResolution = DoNNavigation::Debug_GetTimer();
 
-	// Resolve origin and destination volumes	
-
-	auto originVolume      = GetClosestNavigableVolume(Origin,      CollisionComponent, QueryParams.CollisionShapeInflation);
-	auto destinationVolume = GetClosestNavigableVolume(Destination, CollisionComponent, QueryParams.CollisionShapeInflation);
+	// Resolve origin and destination volumes
+	auto originVolume      = ResolveVector(Origin,      CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+	auto destinationVolume = ResolveVector(Destination, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
 
 	DoNNavigation::Debug_StopTimer(timerVolumeResolution);	
 	UE_LOG(DoNNavigationLog, Verbose, TEXT("%s"), *FString::Printf(TEXT("Time spent resolving origin and destination volumes - %f seconds"), timerVolumeResolution / 1000.0));	
@@ -1606,6 +1762,14 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 		InvalidVolumeErrorLog(originVolume, destinationVolume, Origin, Destination);
 
 		return false;
+	}
+	else
+	{
+		if (Origin != Actor->GetActorLocation())
+		{
+			UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin %s for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
+			Actor->SetActorLocation(Origin, false);
+		}
 	}
 
 	// Input Visualization - II
@@ -1622,13 +1786,13 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 
 	uint64 timerPathfinding = DoNNavigation::Debug_GetTimer();
 	
-	FDonNavigationQueryTask syncrhonousTask = FDonNavigationQueryTask(
+	FDonNavigationQueryTask synchronousTask = FDonNavigationQueryTask(
 		FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, originVolume, destinationVolume, voxelCollisionProfile),
 		FDoNNavigationResultHandler(),
 		FDonNavigationDynamicCollisionDelegate()
 		);
 
-	auto& data = syncrhonousTask.Data;
+	auto& data = synchronousTask.Data;
 
 	// Core pathfinding algorithm
 	while (!data.Frontier.empty())
@@ -1644,7 +1808,7 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 		const auto& neighbors = FindOrSetupNeighborsForVolume(currentVolume);
 		for (auto neighbor : neighbors)
 		{	
-			ExpandFrontierTowardsTarget(syncrhonousTask, currentVolume, neighbor);
+			ExpandFrontierTowardsTarget(synchronousTask, currentVolume, neighbor);
 		}
 	}
 
@@ -1694,6 +1858,13 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	{	
 		FString collisionComponentLog = CollisionComponent ? *CollisionComponent->GetName() : *FString("Invalid");
 		UE_LOG(DoNNavigationLog, Error, TEXT("%s"), *FString::Printf(TEXT("Invalid input parameters received. Actor: %s CollisionComponent: %s"), Actor ? *Actor->GetName() : *FString("Invalid"), *collisionComponentLog));
+
+		return false;
+	}
+
+	if (!IsLocationWithinNavigableWorld(Destination))
+	{
+		UE_LOG(DoNNavigationLog, Error, TEXT("Destination %s is outside world bounds. Please clamp your destination within the navigable world or expand world size under settings if necessary."), *Destination.ToString());
 
 		return false;
 	}
@@ -1749,8 +1920,8 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	}
 
 	// Resolve origin and destination volumes
-	auto originVolume       =  GetClosestNavigableVolume(Origin,      CollisionComponent, QueryParams.CollisionShapeInflation);
-	auto destinationVolume  =  GetClosestNavigableVolume(Destination, CollisionComponent, QueryParams.CollisionShapeInflation);
+	auto originVolume       = ResolveVector(Origin,      CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+	auto destinationVolume  = ResolveVector(Destination, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
 
 	// Input Validations - II
 	if (!originVolume || !destinationVolume)
@@ -1759,6 +1930,15 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 
 		return false;
 	}
+	else
+	{
+		if (Origin != Actor->GetActorLocation())
+		{
+			UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
+			Actor->SetActorLocation(Origin, false);
+		}
+	}
+
 
 	// Input Visualization - II
 	if (DebugParams.DrawDebugVolumes)
@@ -1993,7 +2173,7 @@ void ADonNavigationManager::TickScheduledPathfindingTasks_Safe(float DeltaSecond
 	{
 		FScopeLock Lock(&CriticalSection_Pathing);
 		TickScheduledPathfindingTasks(DeltaSeconds, MaxIterationsPerTick);
-	}	
+	}
 }
 
 void ADonNavigationManager::CompleteNavigationTask(int32 TaskIndex)
@@ -2240,12 +2420,14 @@ void ADonNavigationManager::AppendVolumeListFromRange(FVector Start, FVector End
 	}
 }
 
-
 // AI Utility Functions
 
 FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude/* = -1.f*/, float MaxZAngularDispacement/* = 15.f*/, int32 MaxAttempts/* = 5*/)
 {
 	bFoundValidResult = false;
+
+	if (!Actor)
+		return FVector::ZeroVector;
 
 	FVector origin = Actor->GetActorLocation();
 	FVector baseDisplacement = FVector::ForwardVector * Distance;
@@ -2261,8 +2443,10 @@ FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor,
 			newDestination = FVector(newDestination.X, newDestination.Y, FMath::Clamp(newDestination.Z, newDestination.Z, MaxDesiredAltitude));
 
 		const bool shouldSweep = false;		
+		bool bInitialPositionCollides;
 
-		auto destinationVolume = GetClosestNavigableVolume(newDestination, NULL, 0.f, shouldSweep);
+		auto destinationVolume = GetClosestNavigableVolume(newDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+
 		if (destinationVolume && !IsLocationBeneathLandscape(newDestination))
 		{
 			bFoundValidResult = true;
@@ -2314,7 +2498,7 @@ void ADonNavigationManager::VisualizeNAVResult(const TArray<FVector>& PathSoluti
 		previousEntryPoint = entryPoint;
 		entryPoint = PathSolution[i];
 
-		DrawDebugLine_Safe(GetWorld(), previousEntryPoint, entryPoint, LineColor, true, DebugParams.LineDuration, 5.f, DebugParams.LineThickness);		
+		DrawDebugLine_Safe(GetWorld(), previousEntryPoint, entryPoint, LineColor, true, DebugParams.LineDuration, 0.f, DebugParams.LineThickness);
 		DrawDebugPoint_Safe(GetWorld(), entryPoint, 10.f, FColor::Blue, true, DebugParams.LineDuration);
 	}
 }

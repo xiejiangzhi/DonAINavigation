@@ -18,7 +18,7 @@
 
 UDoNNavigationVolumeComponent::UDoNNavigationVolumeComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	SetBoxExtent(FVector(50,50,50));
+	BoxExtent = FVector(50.0f, 50.0f, 50.0f);
 
 	static FName CollisionProfileName(TEXT("DoNNavigationVolume"));
 	SetCollisionProfileName(CollisionProfileName);	

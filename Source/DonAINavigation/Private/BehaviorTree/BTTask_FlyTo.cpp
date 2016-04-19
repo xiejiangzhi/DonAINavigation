@@ -62,7 +62,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	// Validate internal state:
 	if (!pawn || !myMemory || !blackboard || !NavigationManager)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[DoN Navigation] BTTask_FlyTo has invalid data for AI Pawn or NodeMemory or NavigationManager. Unable to proceed."));
+		UE_LOG(DoNNavigationLog, Log, TEXT("BTTask_FlyTo has invalid data for AI Pawn or NodeMemory or NavigationManager. Unable to proceed."));
 
 		if(blackboard)
 			HandleTaskFailure(blackboard);
@@ -73,11 +73,11 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	// Validate blackboard key data:
 	if(FlightLocationKey.SelectedKeyType != UBlackboardKeyType_Vector::StaticClass())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[DoN Navigation] Invalid FlightLocationKey. Expected Vector type, found %s"), *(FlightLocationKey.SelectedKeyType ? FlightLocationKey.SelectedKeyType->GetName() : FString("?")));
+		UE_LOG(DoNNavigationLog, Log, TEXT("Invalid FlightLocationKey. Expected Vector type, found %s"), *(FlightLocationKey.SelectedKeyType ? FlightLocationKey.SelectedKeyType->GetName() : FString("?")));
 		HandleTaskFailure(blackboard);
 
 		return EBTNodeResult::Failed;
-	}	
+	}
 
 	// Prepare input:
 	myMemory->Reset();	
@@ -96,13 +96,14 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	// Bind dynamic collision updates delegate:		
 	myMemory->DynamicCollisionListener.BindDynamic(this, &UBTTask_FlyTo::Pathfinding_OnDynamicCollisionAlert);
 
-	// Schedule task:	
-	bool bTaskScheduled = NavigationManager->SchedulePathfindingTask(pawn, flightDestination, myMemory->QueryParams, DebugParams, resultHandler, myMemory->DynamicCollisionListener);
+	// Schedule task:
+	bool bTaskScheduled = false;
+	bTaskScheduled = NavigationManager->SchedulePathfindingTask(pawn, flightDestination, myMemory->QueryParams, DebugParams, resultHandler, myMemory->DynamicCollisionListener);
 
 	if (bTaskScheduled)
 	{
-		if(myMemory->QueryResults.QueryStatus != EDonNavigationQueryStatus::Success) // for simple paths the scheduler may have already solved the path synchronously
-			myMemory->QueryResults.QueryStatus = EDonNavigationQueryStatus::InProgress;
+		/*if(myMemory->QueryResults.QueryStatus != EDonNavigationQueryStatus::Success) // for simple paths the scheduler may have already solved the path synchronously
+			myMemory->QueryResults.QueryStatus = EDonNavigationQueryStatus::InProgress;*/
 
 		return EBTNodeResult::InProgress;
 	}
@@ -161,8 +162,35 @@ void UBTTask_FlyTo::Pathfinding_OnFinish(const FDoNNavigationQueryData& Data)
 	auto myMemory = TaskMemoryFromGenericPayload(Data.QueryParams.CustomDelegatePayload);
 	if (!myMemory)
 		return;
-	
+
+	// Store query results:	
 	myMemory->QueryResults = Data;
+
+	// Validate results:
+	if (!Data.PathSolutionOptimized.Num())
+	{
+		UE_LOG(DoNNavigationLog, Log, TEXT("Found empty pathsolution in Fly To node. Aborting task..."));
+
+		myMemory->QueryResults.QueryStatus = EDonNavigationQueryStatus::Failure;
+
+		return;		
+	}
+
+	// Inform pawn owner that we're about to start locomotion!
+	if (myMemory->bIsANavigator)
+	{
+		auto ownerComp = myMemory->Metadata.OwnerComp.Get();
+		if (!ownerComp)
+			return;
+
+		APawn* pawn = ownerComp->GetAIOwner()->GetPawn();
+
+		IDonNavigator::Execute_OnLocomotionBegin(pawn);
+
+		//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment 0"));
+		IDonNavigator::Execute_OnNextSegment(pawn, myMemory->QueryResults.PathSolutionOptimized[0]);
+	}
+	
 }
 
 void UBTTask_FlyTo::Pathfinding_OnDynamicCollisionAlert(const FDonNavigationDynamicCollisionPayload& Data)
@@ -221,6 +249,12 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 
 	case EDonNavigationQueryStatus::Failure:
 
+		auto pawn = OwnerComp.GetAIOwner()->GetPawn();
+		auto blackboard = pawn ? pawn->GetController()->FindComponentByClass<UBlackboardComponent>() : NULL;
+
+		if(blackboard)
+			HandleTaskFailure(blackboard);
+
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 
 		break;	
@@ -252,10 +286,7 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 		pawn->AddMovementInput(flightDirection, 1.f);
 	}
 
-
-	FVector test = FVector(10,10,100);
-	//test.
-		
+	//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment %d Distance: %f"), MyMemory->solutionTraversalIndex, flightDirection.Size());
 
 	// Reached next segment:
 	if (flightDirection.Size() <= MinimumProximityRequired)
@@ -270,6 +301,10 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 			// Unregister all dynamic collision listeners. We've completed our task and are no longer interested in listening to these:
 			NavigationManager->StopListeningToDynamicCollisionsForPath(MyMemory->DynamicCollisionListener, queryResults);
 
+			// Inform the pawn owner that we're stopping locomotion (having reached the destination!)
+			if (MyMemory->bIsANavigator)
+				IDonNavigator::Execute_OnLocomotionEnd(pawn);
+
 			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 
 			return;
@@ -277,6 +312,26 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 		else
 		{
 			MyMemory->solutionTraversalIndex++;
+
+			// @todo: because we just completed a segment, we should stop listening to collisions on the previous voxel. 
+			// If not, a pawn may needlessly recalcualte its solution when a obstacle far behind it intrudes on a voxel it has already visited.
+
+			if (MyMemory->bIsANavigator)
+			{
+				if (!MyMemory->Metadata.OwnerComp.IsValid()) // edge case identified during high-speed time dilation. Need to gain a better understanding of exactly what triggers this issue.
+				{
+					auto blackboard = pawn->GetController()->FindComponentByClass<UBlackboardComponent>();
+					HandleTaskFailure(blackboard);
+
+					FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+				}
+
+				FVector nextPoint = queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex];
+				//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment %d, %s"), MyMemory->solutionTraversalIndex, *nextPoint.ToString());
+
+				IDonNavigator::Execute_OnNextSegment(pawn, nextPoint);
+			}
+			
 		}
 	}
 }
@@ -293,7 +348,14 @@ void UBTTask_FlyTo::HandleTaskFailure(UBlackboardComponent* blackboard)
 EBTNodeResult::Type UBTTask_FlyTo::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {	
 	// safely abort nav task before we leave
-	AbortPathfindingRequest(OwnerComp, NodeMemory);
+	AbortPathfindingRequest(OwnerComp, NodeMemory);	
+
+	APawn* pawn = OwnerComp.GetAIOwner()->GetPawn();
+	FBT_FlyToTarget* myMemory = (FBT_FlyToTarget*)NodeMemory;
+
+	// Notify locomotion state:
+	if (myMemory->QueryResults.PathSolutionOptimized.Num() && myMemory->bIsANavigator && pawn)
+		IDonNavigator::Execute_OnLocomotionAbort(pawn);
 
 	return Super::AbortTask(OwnerComp, NodeMemory);
 }

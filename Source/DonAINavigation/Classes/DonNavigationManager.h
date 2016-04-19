@@ -214,6 +214,9 @@ struct FDoNNavigationQueryParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
 	float QueryTimeout = 3.f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
+	bool bFlexibleOriginGoal = true;
+
 	/** Skips optimization of the path solution completely. Optimized paths are shorter and more visually cogent
 	*   but come at a cost. Maps with low voxel density (high VoxelSize value) usually need optimization for best results
 	*/
@@ -250,6 +253,10 @@ struct FDoNNavigationQueryParams
 	*/
 	void* CustomDelegatePayload = NULL;
 
+	//
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
+	bool bTemp_WalkSolution = false;
+
 	FDoNNavigationQueryParams()
 	{
 
@@ -263,19 +270,19 @@ struct FDoNNavigationDebugParams
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	bool DrawDebugVolumes;
+	bool DrawDebugVolumes = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	bool VisualizeRawPath;
+	bool VisualizeRawPath = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	bool VisualizeOptimizedPath;
+	bool VisualizeOptimizedPath = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	bool VisualizeInRealTime;
+	bool VisualizeInRealTime = false;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	float LineThickness;
+	float LineThickness = 2.f;
 
 	/* -1 signifies persistent lines that need to be flushed out manually to clear them*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
@@ -498,6 +505,8 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 	
 	bool bReloadCollisionCache = false;
 
+	bool bDisableCacheUsage = false;
+
 	bool bUseCheapBoundsCollision = false;
 	
 	float BoundsScaleFactor = 1.f;
@@ -539,8 +548,8 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 
 	FDonNavigationDynamicCollisionTask(){}
 
-	FDonNavigationDynamicCollisionTask(FDonMeshIdentifier MeshId, FDonCollisionSamplerCallback ResultHandler, FDonNavigationVoxel MeshOriginalVolume, bool bReloadCollisionCache, bool bUseCheapBoundsCollision, float BoundsScaleFactor, bool bDrawDebug)
-		: MeshId(MeshId), ResultHandler(ResultHandler), MeshOriginalVolume(MeshOriginalVolume), bReloadCollisionCache(bReloadCollisionCache), bUseCheapBoundsCollision(bUseCheapBoundsCollision), BoundsScaleFactor(BoundsScaleFactor), bDrawDebug(bDrawDebug)
+	FDonNavigationDynamicCollisionTask(FDonMeshIdentifier MeshId, FDonCollisionSamplerCallback ResultHandler, FDonNavigationVoxel MeshOriginalVolume, bool bDisableCacheUsage, bool bReloadCollisionCache, bool bUseCheapBoundsCollision, float BoundsScaleFactor, bool bDrawDebug)
+		: MeshId(MeshId), ResultHandler(ResultHandler), MeshOriginalVolume(MeshOriginalVolume), bDisableCacheUsage(bDisableCacheUsage), bReloadCollisionCache(bReloadCollisionCache), bUseCheapBoundsCollision(bUseCheapBoundsCollision), BoundsScaleFactor(BoundsScaleFactor), bDrawDebug(bDrawDebug)
 	{
 		i = j = k = 0;
 
@@ -549,7 +558,7 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 
 	friend bool operator== (const FDonNavigationDynamicCollisionTask& A, const FDonNavigationDynamicCollisionTask& B)
 	{
-		return A.MeshId == B.MeshId;
+		return A.MeshId.Mesh == B.MeshId.Mesh;
 	}
 	
 	friend uint32 GetTypeHash(const FDonNavigationDynamicCollisionTask& Other)	
@@ -579,11 +588,12 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif // WITH_EDITOR
 
-private:
+protected:
 
 	FCollisionShape VoxelCollisionShape;
 	FCollisionObjectQueryParams VoxelCollisionObjectParams;
 	FCollisionQueryParams VoxelCollisionQueryParams;
+	FCollisionQueryParams VoxelCollisionQueryParams2;
 	TMap<FDonNavigationVoxel*, TArray <FDonNavigationVoxel*>> NavGraphCache;
 	TMap<FDonMeshIdentifier, FDonVoxelCollisionProfile> VoxelCollisionProfileCache;
 
@@ -603,19 +613,19 @@ public:
 	FDonNavVoxelXYZ NAVVolumeData;
 
 	/* Represents the side of the cube used to build the voxel. Eg: a value of 300 produces a cube 300x300x300*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensinos")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensions")
 	float VoxelSize;
 
 	/* The number of voxels to build along the X axis (offset from NAV actor)*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensinos")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensions")
 	int32 XGridSize;
 
 	/* The number of voxels to build along the Y axis (offset from NAV actor)*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensinos")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensions")
 	int32 YGridSize;
 
 	/* The number of voxels to build along the Z axis (offset from NAV actor)*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensinos")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "World Dimensions")
 	int32 ZGridSize;
 
 	// Collision
@@ -750,6 +760,10 @@ private:
 	void DrawDebugPoint_Safe(UWorld* World, FVector PointLocation, float PointThickness, FColor Color, bool bPersistentLines, float LifeTime);
 	void DrawDebugSphere_Safe(UWorld* World, FVector Center, float Radius, float Segments, FColor Color, bool bPersistentLines, float LifeTime);
 	void DrawDebugVoxel_Safe(UWorld* World, FVector Center, FVector Box, FColor Color, bool bPersistentLines, float LifeTime, uint8 DepthPriority, float Thickness);
+
+	// Logging:
+	void InvalidVolumeErrorLog(FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationDestination, FVector Origin, FVector Destination);
+	TSet<FVector> UnresolvableVectors;
 
 
 public:
@@ -908,7 +922,7 @@ public:
 	*
 	*/
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
-	bool ScheduleDynamicCollisionUpdate(UPrimitiveComponent* Mesh, FDonCollisionSamplerCallback ResultHandler, FName CustomCacheIdentifier = NAME_None, bool bReplaceExistingTask = false, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool bForceSynchronousExecution = false, bool bDrawDebug = false);
+	bool ScheduleDynamicCollisionUpdate(UPrimitiveComponent* Mesh, FDonCollisionSamplerCallback ResultHandler, FName CustomCacheIdentifier = NAME_None, bool bReplaceExistingTask = false, bool bDisableCacheUsage = false, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool bForceSynchronousExecution = false, bool bDrawDebug = false);
 
 	/** 
 	*  Unregisters a given dynamic collision listener from a given volume. Your should always call this function whenever a particular actor or object is
@@ -917,7 +931,11 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
 	void StopListeningToDynamicCollisionsForPath(FDonNavigationDynamicCollisionDelegate ListenerToClear, UPARAM(ref) const FDoNNavigationQueryData& QueryData);
-
+	
+	void VoxelCacheClearByKey(const FDonMeshIdentifier &MeshId)
+	{
+		VoxelCollisionProfileCache.Remove(MeshId);
+	}
 
 	/** 
 	*  WARNING: This function is for stress-testing for performance only, it operates synchronously unlike the scheduler functions making it great for profiling sessions.
@@ -939,13 +957,18 @@ public:
 	// Tracing utility
 
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
-	bool IsDirectPathSweep(UPrimitiveComponent* CollisionComponent, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps = false, float CollisionShapeInflation = 0.f);
+	bool IsDirectPathSweep(UPrimitiveComponent* CollisionComponent, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps = false, float CollisionShapeInflation = 0.f);	
 
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
-	bool IsDirectPathLineTrace(FVector start, FVector end, FHitResult &OutHit, TArray<AActor*> ActorsToIgnore);
+	bool IsDirectPathLineTrace(FVector start, FVector end, FHitResult &OutHit, const TArray<AActor*> &ActorsToIgnore, bool bFindInitialOverlaps = true);
 
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
 	bool IsDirectPathLineSweep(UPrimitiveComponent* CollisionComponent, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps = false, float CollisionShapeInflation = 0.f);
+
+	// Shape based:	
+	bool IsDirectPathSweepShape(const FCollisionShape& Shape, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps = false);	
+	bool IsDirectPathLineSweepShape(const FCollisionShape& Shape, FVector Start, FVector End, FHitResult &OutHit, bool bFindInitialOverlaps = false);
+
 
 	// AI Utility Functions
 
@@ -965,6 +988,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
 	void VisualizeDynamicCollisionListeners(FDonNavigationDynamicCollisionDelegate Listener, UPARAM(ref) const FDoNNavigationQueryData& QueryData);
+
+	// NAV Visualizer
+	void VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams);
+
+	// Logging utility
+	static FString GetMeshLogIdentifier(UPrimitiveComponent* Mesh);
 	
 	////////////////////////////////////////////////////////////////////////////////////////
 
@@ -997,16 +1026,17 @@ private:
 
 	// Voxel collision sampling:
 	void UpdateVoxelCollision(FDonNavigationVoxel& Volume);
-	FDonVoxelCollisionProfile GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy = false, FName CustomCacheIdentifier = NAME_None, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
+	FDonVoxelCollisionProfile GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy = false, bool bDisableCacheUsage = false, FName CustomCacheIdentifier = NAME_None, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
 	FDonVoxelCollisionProfile SampleVoxelCollisionForMesh(UPrimitiveComponent* Mesh, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy = false, FName CustomCacheIdentifier = NAME_None, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
 
 	// Dynamic collision listeners:
-	void DynamicCollisionUpdateForMesh(const FDonMeshIdentifier& MeshId, FName CustomCacheIdentifier = NAME_None, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = true, float BoundsScaleFactor = 1.f, bool bDrawDebug = false);
+	void DynamicCollisionUpdateForMesh(const FDonMeshIdentifier& MeshId, FDonVoxelCollisionProfile& VoxelCollisionProfile, bool bDisableCacheUsage = false, bool bDrawDebug = false);
 	void AddCollisionListenerToVolumeFromTask(FDonNavigationVoxel* Volume, FDonNavigationQueryTask& task);
 	FDonNavigationVoxel* AppendVolumeList(FVector Location, FDonNavigationQueryTask& task);
 	void AppendVolumeListFromRange(FVector Start, FVector End, FDonNavigationQueryTask& task);
 
-	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
+	FDonNavigationVoxel* ResolveVector(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
+	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
 	FDonNavigationVoxel* GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep);
 
 	bool CanNavigate(FDonNavigationVoxel* Volume);
@@ -1017,10 +1047,5 @@ private:
 	void OptimizePathSolution(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);	
 	void OptimizePathSolution_Pass1_LineTrace(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);
 
-	// NAV Visualizer
-	void VisualizeSolution(FVector source, FVector destination, const TArray<FVector>& PathSolutionRaw, const TArray<FVector>& PathSolutionOptimized, const FDoNNavigationDebugParams& DebugParams);
-
-
 	////////////////////////////////////////////////////////////////////////////////////////
-
 };
