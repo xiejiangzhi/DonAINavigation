@@ -744,6 +744,8 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 	{
 		task.FetchSuccess();
 
+		task.CollisionData = *VoxelCollisionProfileCache.Find(meshId);
+
 		AddDynamicCollisionTask(task);
 	}
 	// Are we using cheap bounds collision?
