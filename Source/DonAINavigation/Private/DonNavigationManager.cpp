@@ -287,7 +287,10 @@ void ADonNavigationManager::ConstructBuilder()
 {
 	UWorld* const World = GetWorld();
 	if (!World)
-		return;	
+		return;
+
+	if (bIsUnbound)
+		return;
 	
 	uint64 timer = DoNNavigation::Debug_GetTimer();	
 	GenerateNavigationVolumePixels();
@@ -501,6 +504,9 @@ TArray<FDonNavigationVoxel*> ADonNavigationManager::FindOrSetupNeighborsForVolum
 
 bool ADonNavigationManager::IsMeshBoundsWithinNavigableWorld(UPrimitiveComponent* Mesh, float BoundsScaleFactor/* = 1.f */)
 {
+	if (bIsUnbound)
+		return true;
+
 	FVector meshExtents = Mesh->Bounds.BoxExtent * BoundsScaleFactor;
 	FVector meshMinBounds = (Mesh->Bounds.Origin - meshExtents);
 	FVector meshMaxBounds = (Mesh->Bounds.Origin + meshExtents);
@@ -1235,7 +1241,7 @@ bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComp
 	const bool bTraceComplex = false;
 	FComponentQueryParams collisionParams(FName("IsDirectPathSweep"), bTraceComplex);
 	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
-	collisionParams.IgnoreComponents = VoxelCollisionQueryParams.IgnoreComponents;
+	collisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
 	collisionParams.AddIgnoredComponent(CollisionComponent);
 
 	if (CollisionShapeInflation == 0.f)
@@ -1309,7 +1315,7 @@ bool ADonNavigationManager::IsDirectPathSweepShape(const FCollisionShape& Shape,
 	const bool bTraceComplex = false;
 	FComponentQueryParams collisionParams(FName("IsDirectPathSweepShape"), bTraceComplex);
 	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
-	collisionParams.IgnoreComponents = VoxelCollisionQueryParams.IgnoreComponents;	
+	collisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
 
 	bHit = GetWorld()->SweepMultiByObjectType(OutHits, Start, End, FQuat::Identity, VoxelCollisionObjectParams, Shape, collisionParams);
 
@@ -1621,7 +1627,135 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVector(FVector &DesiredLocati
 	return NULL;
 }
 
+bool ADonNavigationManager::GetClosestNavigableVector(FVector DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation/* = 0.f;*/, bool bShouldSweep/* = true*/)
+{
+	// Long-term goal: Eliminate code duplication between the two GetClosestNavigableVector overloads
 
+	if (bShouldSweep && !CollisionComponent)
+		return NULL;
+
+	ResolvedLocation = VolumeOriginAt(DesiredLocation);
+	
+	if (CanNavigate(ResolvedLocation))
+	{
+		return true;
+	}
+
+	FHitResult hit;
+	TArray<FOverlapResult> outOverlaps;
+	bool bConsiderInitialOverlaps = true;
+
+	if (bShouldSweep)
+	{
+		FCollisionObjectQueryParams objectParams = VoxelCollisionObjectParams;
+		objectParams.AddObjectTypesToQuery(CollisionComponent->GetCollisionObjectType());
+		FCollisionQueryParams queryParams = VoxelCollisionQueryParams;
+		queryParams.AddIgnoredComponent(CollisionComponent);
+		bInitialPositionCollides = GetWorld()->OverlapMultiByObjectType(outOverlaps, DesiredLocation, FQuat::Identity, objectParams, CollisionComponent->GetCollisionShape(1.f), queryParams);
+
+		if (bInitialPositionCollides)
+			return false;
+	}
+
+	// 2 a) Simple heuristics:
+	static const int32 neighborGuessList = 9;
+	static const int32 expansionStepSize = 2;
+	static const int32 numIterations = 2;
+
+	int xGuessList[neighborGuessList] = { 0,  2,  2, -2, -2, -2,  2,  0, -2 };
+	int yGuessList[neighborGuessList] = { 0,  0,  2,  0, -2,  2, -2,  0, -2 };
+	int zGuessList[neighborGuessList] = { 1,  1,  1,  1,  1,  1,  1, -1, -1 };
+
+	for (int32 step = 1; step <= numIterations; step++)
+	{
+		for (int32 i = 0; i < neighborGuessList; i++)
+		{
+			int32 stepScale = step * expansionStepSize;
+
+			//FVector newLocation = LocationAtId(volumeId.X + xGuessList[i], volumeId.Y + yGuessList[i], volumeId.Z + zGuessList[i] * stepScale);
+			FVector newLocation = ResolvedLocation + VoxelSize * FVector(xGuessList[i], yGuessList[i], zGuessList[i] * stepScale);
+
+			if (CanNavigate(newLocation))
+			{
+				if (!bShouldSweep || IsDirectPathLineSweep(CollisionComponent, DesiredLocation, newLocation, hit, bConsiderInitialOverlaps, CollisionShapeInflation))
+				{
+					ResolvedLocation = newLocation;
+					return true;
+				}
+			}
+		}
+	}
+
+	// No solution:
+
+	UE_LOG(DoNNavigationLog, Error, TEXT("Error: GetClosestNavigableVolume failed to resolve a given volume."));
+
+#if WITH_EDITOR
+	DrawDebugSphere_Safe(GetWorld(), DesiredLocation, 64.f, 6.f, FColor::Magenta, true, -1.f);
+	DrawDebugPoint_Safe(GetWorld(), DesiredLocation, 6.f, FColor::Yellow, true, -1.f);
+#endif // WITH_EDITOR	
+
+	return false;
+}
+
+bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal /*= true*/, float CollisionShapeInflation /*= 0.f*/, bool bShouldSweep /*= true*/)
+{
+	// Long-term goal: Eliminate code duplication between the two ResolveVector overloads
+
+	bool bInitialPositionCollides;
+	bool bFoundResult = GetClosestNavigableVector(DesiredLocation, ResolvedLocation, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);
+
+	const int32 numTweaks = 6;
+	FVector locationTweaks[numTweaks] = { FVector(0, 0,  1), FVector(1, 0, 0), FVector(0,  1, 0),
+		FVector(0, 0, -1), FVector(-1, 0, 0), FVector(0, -1, 0)
+	};
+
+	float tweakMagnitudes[3] = { 20, 40, 60 };
+
+	if (bFoundResult)
+		return true; // success
+
+
+	// Failure handling:
+	if (bFlexibleOriginGoal)
+	{
+		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
+
+		for (auto tweakMagnitude : tweakMagnitudes)
+		{
+			for (const auto& tweakDir : locationTweaks)
+			{
+				FVector tweak = tweakDir * tweakMagnitude;
+
+				bool bFoundResult = GetClosestNavigableVector(DesiredLocation + tweak, ResolvedLocation, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);
+
+				if (bFoundResult)
+				{
+					UE_LOG(DoNNavigationLog, Warning, TEXT("Substitute Origin or Destination (%s offset) is being used for pawn to overcome initial overlap. (Can be disabled in QueryParams)"), *tweak.ToString());
+
+					DesiredLocation = DesiredLocation + tweak;
+
+					return true; // success
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+bool ADonNavigationManager::CanNavigate(FVector Location)
+{
+	// @todo: refactor UpdateVoxelCollision to call this so we don't end up with two different ways of querying world collision
+
+	TArray<FOverlapResult> outOverlaps;
+
+	bool const bHit = GetWorld()->OverlapMultiByObjectType(outOverlaps, Location, FQuat::Identity, VoxelCollisionObjectParams, VoxelCollisionShape, VoxelCollisionQueryParams);
+
+	bool CanNavigate = !outOverlaps.Num();
+
+	return CanNavigate;
+}
 
 bool ADonNavigationManager::CanNavigate(FDonNavigationVoxel* Volume)
 {
@@ -1645,6 +1779,24 @@ bool ADonNavigationManager::CanNavigateByCollisionProfile(FDonNavigationVoxel* V
 			return false;
 	}
 	
+	return bCanNavigate;
+}
+
+bool ADonNavigationManager::CanNavigateByCollisionProfile(FVector Location, const FDonVoxelCollisionProfile& CollisionToTest)
+{
+	if (!CanNavigate(Location))
+		return false;
+
+	bool bCanNavigate = true;
+
+	for (FVector voxelOffset : CollisionToTest.RelativeVoxelOccupancy)
+	{
+		FVector locationToTest = LocationAtId(Location, voxelOffset.X, voxelOffset.Y, voxelOffset.Z);
+
+		if (!CanNavigate(locationToTest))
+			return false;
+	}
+
 	return bCanNavigate;
 }
 
@@ -1789,7 +1941,7 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 	uint64 timerPathfinding = DoNNavigation::Debug_GetTimer();
 	
 	FDonNavigationQueryTask synchronousTask = FDonNavigationQueryTask(
-		FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, originVolume, destinationVolume, voxelCollisionProfile),
+		FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, originVolume, destinationVolume, originVolume->Location, destinationVolume->Location, voxelCollisionProfile),
 		FDoNNavigationResultHandler(),
 		FDonNavigationDynamicCollisionDelegate()
 		);
@@ -1864,7 +2016,7 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 		return false;
 	}
 
-	if (!IsLocationWithinNavigableWorld(Destination))
+	if (!bIsUnbound && !IsLocationWithinNavigableWorld(Destination))
 	{
 		UE_LOG(DoNNavigationLog, Error, TEXT("Destination %s is outside world bounds. Please clamp your destination within the navigable world or expand world size under settings if necessary."), *Destination.ToString());
 
@@ -1892,12 +2044,17 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	const bool bFindInitialOverlaps = true;
 	if (IsDirectPathLineSweep(CollisionComponent, Origin, Destination, hitResult, bFindInitialOverlaps))
 	{	
-		FDonNavigationQueryTask task(FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, VolumeAt(Origin), VolumeAt(Destination), FDonVoxelCollisionProfile()), ResultHandlerDelegate, DynamicCollisionListener);
+		FDonNavigationQueryTask task(FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, bIsUnbound ? NULL : VolumeAt(Origin), bIsUnbound ? NULL : VolumeAt(Destination), Origin, Destination, FDonVoxelCollisionProfile()), ResultHandlerDelegate, DynamicCollisionListener);
 
 		task.Data.PathSolutionRaw.Add(Origin);
 		task.Data.PathSolutionRaw.Add(Destination);
-		task.Data.VolumeSolution.Add(task.Data.OriginVolume);
-		task.Data.VolumeSolution.Add(task.Data.DestinationVolume);
+
+		if (!bIsUnbound)
+		{
+			task.Data.VolumeSolution.Add(task.Data.OriginVolume);
+			task.Data.VolumeSolution.Add(task.Data.DestinationVolume);
+		}
+		
 		task.Data.PathSolutionOptimized = task.Data.PathSolutionRaw;
 		task.Data.VolumeSolutionOptimized = task.Data.VolumeSolution;
 
@@ -1921,32 +2078,53 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 		DrawDebugPoint_Safe(GetWorld(), Destination, 20.f, FColor::Green, true, -1.f);
 	}
 
-	// Resolve origin and destination volumes
-	auto originVolume       = ResolveVector(Origin,      CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
-	auto destinationVolume  = ResolveVector(Destination, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+	FDonNavigationVoxel* originVolume = NULL;
+	FDonNavigationVoxel* destinationVolume = NULL;
+
+	FVector resolvedOriginCenter = VolumeOriginAt(Origin);
+	FVector resolvedDestinationCenter = VolumeOriginAt(Destination);
+
+	bool bResolvedOrigin = false;
+	bool bResolvedDestination = false;
+
+	if (!bIsUnbound)
+	{
+		// Resolve origin and destination volumes
+		originVolume = ResolveVector(Origin, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+		destinationVolume = ResolveVector(Destination, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+
+			
+
+		// Input Visualization - II
+		if (DebugParams.DrawDebugVolumes)
+		{
+			DrawDebugVoxel_Safe(GetWorld(), originVolume->Location, NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
+			DrawDebugVoxel_Safe(GetWorld(), destinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
+		}
+	}
+	else
+	{
+		//UE_LOG(DoNNavigationLog, Warning, TEXT("[RAW] Origin: %s, Destination: %s"), *Origin.ToString(), *Destination.ToString());
+		//UE_LOG(DoNNavigationLog, Warning, TEXT("[RAW] OriginVolumeCenter: %s, DestinationVolumeCenter: %s"), *resolvedOriginCenter.ToString(), *resolvedDestinationCenter.ToString());
+		bResolvedOrigin = ResolveVector(Origin, resolvedOriginCenter, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+		bResolvedDestination = ResolveVector(Destination, resolvedDestinationCenter, CollisionComponent, QueryParams.bFlexibleOriginGoal, QueryParams.CollisionShapeInflation);
+		//UE_LOG(DoNNavigationLog, Warning, TEXT("[UPD] Origin: %s, Destination: %s"), *Origin.ToString(), *Destination.ToString());
+		//UE_LOG(DoNNavigationLog, Warning, TEXT("[UPD] OriginVolumeCenter: %s, DestinationVolumeCenter: %s"), *resolvedOriginCenter.ToString(), *resolvedDestinationCenter.ToString());
+	}
 
 	// Input Validations - II
-	if (!originVolume || !destinationVolume)
+	if ((!bIsUnbound && (!originVolume || !destinationVolume)) || (bIsUnbound && (!bResolvedOrigin || !bResolvedDestination)))
 	{
 		InvalidVolumeErrorLog(originVolume, destinationVolume, Origin, Destination);
 
 		return false;
 	}
-	else
+
+	// Flexible Origin adaptation:
+	if (Origin != Actor->GetActorLocation())
 	{
-		if (Origin != Actor->GetActorLocation())
-		{
-			UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
-			Actor->SetActorLocation(Origin, false);
-		}
-	}
-
-
-	// Input Visualization - II
-	if (DebugParams.DrawDebugVolumes)
-	{	
-		DrawDebugVoxel_Safe(GetWorld(), originVolume->Location,      NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
-		DrawDebugVoxel_Safe(GetWorld(), destinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly moving %s to new origin for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
+		Actor->SetActorLocation(Origin, false);
 	}
 
 	// Load voxel collision profile:
@@ -1956,7 +2134,7 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 		
 	// Prepare task:
 	FDonNavigationQueryTask request = FDonNavigationQueryTask( 
-			FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, originVolume, destinationVolume, voxelCollisionProfile),
+			FDoNNavigationQueryData(Actor, CollisionComponent, Origin, Destination, QueryParams, DebugParams, originVolume, destinationVolume, resolvedOriginCenter, resolvedDestinationCenter, voxelCollisionProfile),
 			ResultHandlerDelegate, 
 			DynamicCollisionListener
 		);
@@ -2078,6 +2256,9 @@ void ADonNavigationManager::PackageRawSolution(FDonNavigationQueryTask& task)
 {
 	task.Data.PathSolutionOptimized = task.Data.PathSolutionRaw;
 
+	if (bIsUnbound)
+		return;
+
 	for (auto solutionNode : task.Data.PathSolutionRaw)
 	{
 		auto volume = AppendVolumeList(solutionNode, task);
@@ -2155,11 +2336,15 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 				TickNavigationOptimizerCycle(task, iterationsProcessed, maxIterationsPerTask);
 			}
 			// Or path has no solution?
-			else if (data.Frontier.empty())
+			else if (data.Frontier.empty() && data.Frontier_Unbound.empty())
 			{
 				UE_LOG(DoNNavigationLog, Error, TEXT("No pathfinding solution exists for query %s, %s"), *data.GetActorName(), *data.Destination.ToString());
 
 				data.QueryStatus = EDonNavigationQueryStatus::QueryHasNoSolution;
+
+				#if WITH_EDITOR
+					DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
+				#endif
 			}
 		}
 		
@@ -2208,6 +2393,15 @@ void ADonNavigationManager::CompleteNavigationTask(int32 TaskIndex)
 	
 }
 
+bool ADonNavigationManager::PrepareSolution(FDonNavigationQueryTask& Task)
+{
+	auto& data = Task.Data;
+
+	bool bGoalFound = PathSolutionFromVolumeTrajectoryMap(data.OriginVolume, data.DestinationVolume, data.VolumeVsGoalTrajectoryMap, data.VolumeSolution, data.PathSolutionRaw, data.Origin, data.Destination, data.DebugParams);
+
+	return bGoalFound;
+}
+
 void ADonNavigationManager::TickNavigationOptimizerCycle(FDonNavigationQueryTask& task, int32& IterationsProcessed, const int32 MaxIterationsPerTask)
 {
 	auto& data = task.Data;
@@ -2216,13 +2410,17 @@ void ADonNavigationManager::TickNavigationOptimizerCycle(FDonNavigationQueryTask
 
 	if (!data.bOptimizationInProgress)
 	{
-		data.bGoalFound = PathSolutionFromVolumeTrajectoryMap(data.OriginVolume, data.DestinationVolume, data.VolumeVsGoalTrajectoryMap, data.VolumeSolution, data.PathSolutionRaw, data.Origin, data.Destination, data.DebugParams);
+		data.bGoalFound = PrepareSolution(task);
 
 		if(!data.bGoalFound)
 		{
 			UE_LOG(DoNNavigationLog, Error, TEXT("%s"), *FString::Printf(TEXT("Query complete, but goal not found in %d trajectory nodes. Unable to proceed"), data.VolumeVsGoalTrajectoryMap.Num()));
 
 			data.QueryStatus = EDonNavigationQueryStatus::Failure;
+
+			#if WITH_EDITOR
+			DrawDebugSphere_Safe(GetWorld(), data.Destination, 15.f, 8.f, FColor::Red, true, 15.f);
+			#endif
 
 			return;
 		}
@@ -2264,8 +2462,11 @@ void ADonNavigationManager::TickNavigationOptimizerCycle(FDonNavigationQueryTask
 	if (data.bGoalOptimized)
 	{
 		// Add dynamic collision listeners
-		for (auto volume : data.VolumeSolutionOptimized)
-			AddCollisionListenerToVolumeFromTask(volume, task);
+		if (!bIsUnbound)
+		{
+			for (auto volume : data.VolumeSolutionOptimized)
+				AddCollisionListenerToVolumeFromTask(volume, task);
+		}
 
 		VisualizeSolution(data.Origin, data.Destination, data.PathSolutionRaw, data.PathSolutionOptimized, data.DebugParams);
 
@@ -2286,7 +2487,10 @@ void ADonNavigationManager::TickNavigationOptimizer(FDonNavigationQueryTask& tas
 	if (data.optimizer_i == data.PathSolutionRaw.Num() - 2)
 	{	
 		data.PathSolutionOptimized.Add(data.PathSolutionRaw.Last());
-		AppendVolumeList(data.PathSolutionRaw.Last(), task);
+		
+		if (!bIsUnbound)
+			AppendVolumeList(data.PathSolutionRaw.Last(), task);
+
 		data.bGoalOptimized = true;
 
 		return;
@@ -2320,7 +2524,8 @@ void ADonNavigationManager::TickNavigationOptimizer(FDonNavigationQueryTask& tas
 		}		
 
 		// register dynamic collision listeners for the owner of this navigation query:
-		AppendVolumeListFromRange(start, end, task);
+		if (!bIsUnbound)
+			AppendVolumeListFromRange(start, end, task);
 
 		return;
 	}
@@ -2332,7 +2537,8 @@ void ADonNavigationManager::TickNavigationOptimizer(FDonNavigationQueryTask& tas
 		// Are all possible optimization paths exhausted for this node?
 		if (data.optimizer_j == data.optimizer_i || data.MaxSweepAttemptsReachedForNode())
 		{	
-			AppendVolumeList(start, task);
+			if (!bIsUnbound)
+				AppendVolumeList(start, task);
 
 			// Move on to the next point in the solution and try our luck from there:
 			data.optimizer_i++;
@@ -2382,7 +2588,7 @@ void ADonNavigationManager::AddCollisionListenerToVolumeFromTask(FDonNavigationV
 }
 
 FDonNavigationVoxel* ADonNavigationManager::AppendVolumeList(FVector Location, FDonNavigationQueryTask& task)
-{	
+{
 	auto volume = VolumeAt(Location);
 	
 	task.Data.VolumeSolutionOptimized.Add(volume);
@@ -2445,15 +2651,34 @@ FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor,
 			newDestination = FVector(newDestination.X, newDestination.Y, FMath::Clamp(newDestination.Z, newDestination.Z, MaxDesiredAltitude));
 
 		const bool shouldSweep = false;		
-		bool bInitialPositionCollides;
+		bool bInitialPositionCollides = false;
 
-		auto destinationVolume = GetClosestNavigableVolume(newDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+		if (IsLocationBeneathLandscape(newDestination))
+			continue;
 
-		if (destinationVolume && !IsLocationBeneathLandscape(newDestination))
+		if (bIsUnbound)
 		{
-			bFoundValidResult = true;
-			return destinationVolume->Location;
-		}	
+			FVector resolvedDestination;
+			bool bIsResolvable = ResolveVector(newDestination, resolvedDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+
+			if (bIsResolvable)
+			{
+				bFoundValidResult = true;
+
+				return newDestination;
+			}			
+		}
+		else
+		{
+			auto destinationVolume = GetClosestNavigableVolume(newDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+
+			if (destinationVolume)
+			{
+				bFoundValidResult = true;
+
+				return destinationVolume->Location;
+			}
+		}
 	}
 
 	return FVector::ZeroVector;

@@ -120,7 +120,7 @@ class UBTTask_FlyTo : public UBTTaskNode
 	UFUNCTION(BlueprintCallable, Category="DoN Navigation")
 	void Pathfinding_OnDynamicCollisionAlert(const FDonNavigationDynamicCollisionPayload& Data);	
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	ADonNavigationManager* NavigationManager;
 
 

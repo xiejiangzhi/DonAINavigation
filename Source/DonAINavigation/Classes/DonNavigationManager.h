@@ -300,6 +300,26 @@ struct FDoNNavigationDebugParams
 	}
 };
 
+struct FLocVector : public FVector
+{
+	FLocVector(){}
+
+	FLocVector(FVector Vector)
+	{
+		X = Vector.X;
+		Y = Vector.Y;
+		Z = Vector.Z;
+	}
+
+	friend bool operator< (const FLocVector& A, const FLocVector& B)
+	{
+		// This function is simply a workaround for enabling use of FVector type with priority queue.
+		// The value returned is irrelevant:
+
+		return false;
+	}
+};
+
 USTRUCT(BlueprintType)
 struct FDoNNavigationQueryData
 {
@@ -330,9 +350,18 @@ struct FDoNNavigationQueryData
 	bool bGoalOptimized = false;	
 	FDonNavigationVoxel* OriginVolume;
 	FDonNavigationVoxel* DestinationVolume;
+
+	// Unbound:
+	FVector OriginVolumeCenter;
+	FVector DestinationVolumeCenter;
+
 	DoNNavigation::PriorityQueue<FDonNavigationVoxel*> Frontier;	
 	TMap<FDonNavigationVoxel*, uint32> VolumeVsCostMap;
 	TMap<FDonNavigationVoxel*, FDonNavigationVoxel*> VolumeVsGoalTrajectoryMap;
+
+	DoNNavigation::PriorityQueue<FLocVector> Frontier_Unbound;
+	TMap<FLocVector, uint32> VolumeVsCostMap_Unbound;
+	TMap<FLocVector, FLocVector> VolumeVsGoalTrajectoryMap_Unbound;
 
 	// Optimization state variables
 	bool bOptimizationInProgress = false;
@@ -359,9 +388,11 @@ struct FDoNNavigationQueryData
 	FDoNNavigationQueryData(){}
 
 	FDoNNavigationQueryData(AActor* Actor, UPrimitiveComponent* CollisionComponent, FVector Origin, FVector Destination, const FDoNNavigationQueryParams& QueryParams,
-		                    const FDoNNavigationDebugParams& DebugParams,  FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationVolume, FDonVoxelCollisionProfile VoxelCollisionProfile)
+		                    const FDoNNavigationDebugParams& DebugParams,  FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationVolume, 
+							FVector OriginVolumeCenter, FVector DestinationVolumeCenter, FDonVoxelCollisionProfile VoxelCollisionProfile)
 		                  : Actor(Actor), CollisionComponent(CollisionComponent), Origin(Origin), Destination(Destination), QueryParams(QueryParams), DebugParams(DebugParams), 
-		                    OriginVolume(OriginVolume), DestinationVolume(DestinationVolume), VoxelCollisionProfile(VoxelCollisionProfile){}
+		                    OriginVolume(OriginVolume), DestinationVolume(DestinationVolume), 
+		                    OriginVolumeCenter(OriginVolumeCenter), DestinationVolumeCenter(DestinationVolumeCenter), VoxelCollisionProfile(VoxelCollisionProfile){}
 
 	FORCEINLINE FString GetActorName() { return Actor.IsValid() ? Actor->GetName() : FString();	}
 
@@ -423,8 +454,17 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 	FDonNavigationQueryTask( FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandler, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifier)
 						   : Data(InData), ResultHandler(ResultHandler), DynamicCollisionListener(DynamicCollisionNotifier)
 	{	
-		Data.Frontier.put(InData.OriginVolume, 0);
-		Data.VolumeVsCostMap.Add(InData.OriginVolume, 0);
+		if (!InData.OriginVolume) // Unbound
+		{
+			Data.Frontier_Unbound.put(InData.OriginVolumeCenter, 0);
+			Data.VolumeVsCostMap_Unbound.Add(InData.OriginVolumeCenter, 0);
+		}
+		else
+		{
+			Data.Frontier.put(InData.OriginVolume, 0);
+			Data.VolumeVsCostMap.Add(InData.OriginVolume, 0);
+		}
+		
 		Data.QueryStatus = EDonNavigationQueryStatus::InProgress;
 	}
 
@@ -599,9 +639,12 @@ protected:
 
 	bool bRegistrationCompleteForComponents;
 	int32 RegistrationIndexCurrent;
-	int32 MaxRegistrationsPerTick;
+	int32 MaxRegistrationsPerTick;	
 
 public:
+
+	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
+	bool bIsUnbound = false;
 
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = Translation)
 	USceneComponent* SceneComponent;
@@ -713,6 +756,10 @@ private:
 	void AppendImplictDOFNeighborsForVolume(int32 x, int32 y, int32 z, TArray<FDonNavigationVoxel*>& Neighbors);
 	TArray<FDonNavigationVoxel*> FindOrSetupNeighborsForVolume(FDonNavigationVoxel* Volume);
 
+protected:
+
+	float VoxelSizeSquared;
+
 	// DOF based travel
 	static const int32 Volume6DOF = 6;	       // 6 degrees of freedm: Forward, Backward, Left, Right, Up and Down
 	static const int32 VolumeImplicitDOF = 12; // Implicit degrees of freedom: formed by the combination of any 2 direct degrees of freedom proving implicit access to a diagonal neighboring voxel
@@ -730,9 +777,10 @@ private:
 	//	   0       1        2        3       4        5        6       7         8       9      10        11     12      13       14      15      16      17      18     19      20     21      22    23        24      25     26
 	// { x + 1,    x,     x - 1,   x + 1,    x,     x - 1,   x + 1,	  x,    x - 1,   x + 1,	  x,	 x - 1,  x + 1, /* x,*/  x - 1,  x + 1,   x,    x - 1,  x + 1,    x,    x - 1,  x + 1,   x,   x - 1,   x + 1,   x,	   x - 1 };
 	// { y - 1,  y - 1,   y - 1,     y,      y,        y,    y + 1,	y + 1,  y + 1,	 y - 1,  y - 1,	 y - 1,	   y,   /* y,*/   y,     y + 1, y + 1,  y + 1,  y - 1,  y - 1,  y - 1,    y,     y,     y,     y + 1,  y + 1,  y + 1 };
-	// { z + 1,  z + 1,   z + 1,   z + 1,   z + 1,  z + 1,   z + 1,	z + 1,  z + 1,	   z,	  z,	   z,      z,   /* z,*/   z,       z,     z,      z,	z - 1,  z - 1,  z - 1,  z - 1,  z - 1, z - 1,  z - 1,  z - 1,  z - 1, };	
+	// { z + 1,  z + 1,   z + 1,   z + 1,   z + 1,  z + 1,   z + 1,	z + 1,  z + 1,	   z,	  z,	   z,      z,   /* z,*/   z,       z,     z,      z,	z - 1,  z - 1,  z - 1,  z - 1,  z - 1, z - 1,  z - 1,  z - 1,  z - 1, };		
+	
 
-	float VoxelSizeSquared;
+private:
 	
 	// Scheduled Tasks:
 	TArray<FDonNavigationQueryTask,	TInlineAllocator<25>>  ActiveNavigationTasks;
@@ -780,7 +828,34 @@ public:
 	{
 		return NAVVolumeData.X.IsValidIndex(x) && NAVVolumeData.X[x].Y.IsValidIndex(y) && NAVVolumeData.X[x].Y[y].Z.IsValidIndex(z);
 	}
-	
+
+	inline FVector LocationAtId(int32 X, int32 Y, int32 Z)
+	{
+		return GetActorLocation() + VoxelSize * FVector(X, Y, Z) + FVector(VoxelSize / 2, VoxelSize / 2, VoxelSize / 2);
+	}
+
+	inline FVector LocationAtId(FVector Location, int32 X, int32 Y, int32 Z)
+	{
+		return Location + VoxelSize * FVector(X, Y, Z);
+	}
+
+	inline FVector VolumeIdAt(FVector WorldLocation)
+	{
+		int32 x = ((WorldLocation.X - GetActorLocation().X) / VoxelSize) + (WorldLocation.X < GetActorLocation().X ? -1 : 0);
+		int32 y = ((WorldLocation.Y - GetActorLocation().Y) / VoxelSize) + (WorldLocation.Y < GetActorLocation().Y ? -1 : 0);
+		int32 z = ((WorldLocation.Z - GetActorLocation().Z) / VoxelSize) + (WorldLocation.Z < GetActorLocation().Z ? -1 : 0);
+
+		return FVector(x, y, z);
+	}
+
+	inline FVector VolumeOriginAt(FVector WorldLocation)
+	{
+		FVector volumeId = VolumeIdAt(WorldLocation);
+
+		return LocationAtId(volumeId.X, volumeId.Y, volumeId.Z);
+
+	}
+
 	inline FDonNavigationVoxel* VolumeAt(FVector WorldLocation)
 	{
 		int32 x = (WorldLocation.X - GetActorLocation().X) / VoxelSize;
@@ -824,6 +899,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	FVector ClampLocationToNavigableWorld(FVector DesiredLocation)
 	{
+		if (bIsUnbound)
+			DesiredLocation;
+
 		FVector origin = GetActorLocation();
 		float xClamped = FMath::Clamp(DesiredLocation.X, origin.X, origin.X + XGridSize * VoxelSize);
 		float yClamped = FMath::Clamp(DesiredLocation.Y, origin.Y, origin.Y + YGridSize * VoxelSize);
@@ -835,6 +913,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	bool IsLocationWithinNavigableWorld(FVector DesiredLocation)
 	{
+		if (bIsUnbound)
+			return true;
+
 		FVector origin = GetActorLocation();
 
 		return  DesiredLocation.X >= origin.X && DesiredLocation.X <= (origin.X + XGridSize * VoxelSize) &&
@@ -1004,7 +1085,12 @@ private:
 	void TickScheduledPathfindingTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick);
 	void TickScheduledCollisionTasks(float DeltaSeconds, int32 MaxIterationsPerTick);	
 	void TickScheduledCollisionTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick);
-	void TickNavigationSolver(FDonNavigationQueryTask& task);
+
+protected:
+	virtual void TickNavigationSolver(FDonNavigationQueryTask& task);
+	virtual bool PrepareSolution(FDonNavigationQueryTask& Task);
+
+private:
 	void TickNavigationOptimizer(FDonNavigationQueryTask& task);
 	void TickNavigationOptimizerCycle(FDonNavigationQueryTask& task, int32& IterationsProcessed, const int32 MaxIterationsPerTask);
 	void TickVoxelCollisionSampler(FDonNavigationDynamicCollisionTask& Task);
@@ -1035,12 +1121,21 @@ private:
 	FDonNavigationVoxel* AppendVolumeList(FVector Location, FDonNavigationQueryTask& task);
 	void AppendVolumeListFromRange(FVector Start, FVector End, FDonNavigationQueryTask& task);
 
-	FDonNavigationVoxel* ResolveVector(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
-	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
+	FDonNavigationVoxel* ResolveVector(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
+	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
 	FDonNavigationVoxel* GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep);
 
+	bool ResolveVector(FVector &DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
+	bool GetClosestNavigableVector(FVector DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
+
+protected:
+
+	bool CanNavigate(FVector Location);
 	bool CanNavigate(FDonNavigationVoxel* Volume);
 	bool CanNavigateByCollisionProfile(FDonNavigationVoxel* Volume, const FDonVoxelCollisionProfile& CollisionToTest);
+	bool CanNavigateByCollisionProfile(FVector Location, const FDonVoxelCollisionProfile& CollisionToTest);
+
+private:
 
 	// Path solution generation and optimization pass
 	void PathSolutionFromVolumeSolution(const TArray<FDonNavigationVoxel*>& VolumeSolution, TArray<FVector> &PathSolution, FVector Origin, FVector Destination, const FDoNNavigationDebugParams& DebugParams);	

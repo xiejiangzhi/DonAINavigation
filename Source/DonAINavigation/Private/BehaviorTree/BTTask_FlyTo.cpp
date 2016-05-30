@@ -42,7 +42,12 @@ UBTTask_FlyTo::UBTTask_FlyTo(const FObjectInitializer& ObjectInitializer) : Supe
 void UBTTask_FlyTo::InitializeFromAsset(UBehaviorTree& Asset)
 {
 	Super::InitializeFromAsset(Asset);
-	FlightLocationKey.CacheSelectedKey(GetBlackboardAsset());
+
+	auto blackboard = GetBlackboardAsset();
+	if (!blackboard)
+		return;
+	
+	FlightLocationKey.ResolveSelectedKey(*blackboard);
 }
 
 EBTNodeResult::Type UBTTask_FlyTo::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
@@ -320,16 +325,22 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 			{
 				if (!MyMemory->Metadata.OwnerComp.IsValid()) // edge case identified during high-speed time dilation. Need to gain a better understanding of exactly what triggers this issue.
 				{
-					auto blackboard = pawn->GetController()->FindComponentByClass<UBlackboardComponent>();
-					HandleTaskFailure(blackboard);
+					if (pawn->GetController())
+					{
+						auto blackboard = pawn->GetController()->FindComponentByClass<UBlackboardComponent>();
+						HandleTaskFailure(blackboard);
+					}				
 
 					FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 				}
 
-				FVector nextPoint = queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex];
-				//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment %d, %s"), MyMemory->solutionTraversalIndex, *nextPoint.ToString());
+				if (queryResults.PathSolutionOptimized.IsValidIndex(MyMemory->solutionTraversalIndex))
+				{
+					FVector nextPoint = queryResults.PathSolutionOptimized[MyMemory->solutionTraversalIndex];
+					//UE_LOG(DoNNavigationLog, Verbose, TEXT("Segment %d, %s"), MyMemory->solutionTraversalIndex, *nextPoint.ToString());
 
-				IDonNavigator::Execute_OnNextSegment(pawn, nextPoint);
+					IDonNavigator::Execute_OnNextSegment(pawn, nextPoint);
+				}				
 			}
 			
 		}
