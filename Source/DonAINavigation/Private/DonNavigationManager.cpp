@@ -44,11 +44,11 @@ ADonNavigationManager::ADonNavigationManager(const FObjectInitializer& ObjectIni
 	Billboard = ObjectInitializer.CreateDefaultSubobject<UBillboardComponent>(this, TEXT("Billboard"));	
 	//static ConstructorHelpers::FObjectFinder<UTexture2D> BillboardTexture(TEXT("Texture2D'/Game/AI/NavigationVolumes/Navigation_Volumer_Aerial.Navigation_Volumer_Aerial'"));
 	//Billboard->Sprite = BillboardTexture.Object;
-	Billboard->AttachTo(RootComponent);	
+	Billboard->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 
 	// World Boundary Visualizer:
 	WorldBoundaryVisualizer = ObjectInitializer.CreateDefaultSubobject<UBoxComponent>(this, TEXT("WorldBoundaryVisualizer"));	
-	WorldBoundaryVisualizer->AttachTo(RootComponent);	
+	WorldBoundaryVisualizer->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 	WorldBoundaryVisualizer->SetVisibility(bDisplayWorldBoundary);
 	WorldBoundaryVisualizer->SetHiddenInGame(true);	
 	WorldBoundaryVisualizer->SetCollisionProfileName(FName("NoCollision"));

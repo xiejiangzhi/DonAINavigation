@@ -25,7 +25,7 @@ ADEPRECATED_VolumeAdaptiveBuilder::ADEPRECATED_VolumeAdaptiveBuilder(const FObje
 	Billboard = ObjectInitializer.CreateDefaultSubobject<UBillboardComponent>(this, TEXT("Billboard"));
 	//static ConstructorHelpers::FObjectFinder<UTexture2D> BillboardTexture(TEXT("Texture2D'/Game/AI/NavigationVolumes/Navigation_Volumer_Aerial.Navigation_Volumer_Aerial'"));
 	//Billboard->Sprite = BillboardTexture.Object;
-	Billboard->AttachTo(RootComponent);
+	Billboard->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 
 	XBaseUnit = 150;
 	YBaseUnit = 150;
@@ -172,7 +172,7 @@ UDoNNavigationVolumeComponent* ADEPRECATED_VolumeAdaptiveBuilder::CreateNAVVolum
 	NAVVolumeComponents.Add(volumeComponent);
 
 	volumeComponent->RegisterComponent();
-	volumeComponent->AttachTo(GetRootComponent(), NAME_None, EAttachLocation::KeepWorldPosition);
+	volumeComponent->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
 
 	return volumeComponent;
 }

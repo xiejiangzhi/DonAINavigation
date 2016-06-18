@@ -2,11 +2,11 @@
 	"FileVersion" : 1,
 	
 	"FriendlyName" : "DoN AI Navigation Plugin (Flying AI /3D Aerial Pathfinding)",
-	"Version" : 4,
+	"Version" : 5,
 	"VersionName" : "1.3",
 	"CreatedBy" : "Venugopalan Sreedharan",
 	"CreatedByURL" : "http://www.drunkonnectar.com/3d-pathfinding-ue4/",
-	"EngineVersion" : "4.11.2",
+	"EngineVersion" : "4.12",
 	"Description" : "This plugin is a solution for 3D pathfinding for flying creatures. 
 	
 	It uses voxel based navigation, supports dynamic collision updates and comes with a behavior tree task 'Fly to' which you may directly use in your behavior trees.
