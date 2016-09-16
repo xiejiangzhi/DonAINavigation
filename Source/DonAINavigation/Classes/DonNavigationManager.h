@@ -292,7 +292,7 @@ struct FDoNNavigationDebugParams
 
 	FDoNNavigationDebugParams(bool _DrawDebugVolumes, bool _VisualizeRawPath, bool _VisualizeOptimizedPath, bool _VisualizeInRealTime, float _LineThickness)
 	{
-		DrawDebugVolumes = DrawDebugVolumes;
+		DrawDebugVolumes = _DrawDebugVolumes;
 		VisualizeRawPath = _VisualizeRawPath;
 		VisualizeOptimizedPath = _VisualizeOptimizedPath;
 		VisualizeInRealTime = _VisualizeInRealTime;
@@ -343,17 +343,17 @@ struct FDoNNavigationQueryData
 
 	FDoNNavigationDebugParams DebugParams;
 
+	// Unbound:
+	FVector OriginVolumeCenter;
+	FVector DestinationVolumeCenter;
+
 	FDonVoxelCollisionProfile VoxelCollisionProfile;
 
 	// Processing state variables	
 	bool bGoalFound = false;
 	bool bGoalOptimized = false;	
 	FDonNavigationVoxel* OriginVolume;
-	FDonNavigationVoxel* DestinationVolume;
-
-	// Unbound:
-	FVector OriginVolumeCenter;
-	FVector DestinationVolumeCenter;
+	FDonNavigationVoxel* DestinationVolume;	
 
 	DoNNavigation::PriorityQueue<FDonNavigationVoxel*> Frontier;	
 	TMap<FDonNavigationVoxel*, uint32> VolumeVsCostMap;
@@ -535,23 +535,24 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 	GENERATED_USTRUCT_BODY()
 
 	FDonMeshIdentifier MeshId;
-	uint32 TaskHashValue;	
+	uint32 TaskHashValue;
+
+	FDonCollisionSamplerCallback ResultHandler;
 	
 	FDonNavigationVoxel MeshOriginalVolume;
 
 	FVector MeshOriginalExtents;
 
 	FString MeshAssetName;
-	
+
 	bool bReloadCollisionCache = false;
 
-	bool bDisableCacheUsage = false;
+	bool bDisableCacheUsage = false;	
 
 	bool bUseCheapBoundsCollision = false;
 	
 	float BoundsScaleFactor = 1.f;
-
-	FDonCollisionSamplerCallback ResultHandler;
+	
 	FCollisionObjectQueryParams ObjectParams;
 	FCollisionQueryParams CollisionParams;
 
@@ -679,6 +680,14 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
 	TArray<AActor*> ActorsToIgnoreForCollision;
+
+	/* Some pathfinding scenarios need a special auto-correction to be applied to either origin or 
+	* destination for pathfinding to work. Eg: If a player is hiding flush with a wall then the pathfinding origin
+	* must be offset slightly adjacent to the wall.
+	* Different games/maps will need different auto-correction values, some maps may need large correction values
+	* while others may need only small adjustments. Tweak this list based on your game's needs.*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
+	TArray<float> AutoCorrectionGuessList;
 
 	/** If set to true, collision checks will be performed for each and every voxel when the game begins. Warning: This can slow down loading of the game significantly.
 	 *  Default behavior is set to false, meaning collision data will always be lazy loaded upn demand. This is the recommended approach */
@@ -900,7 +909,7 @@ public:
 	FVector ClampLocationToNavigableWorld(FVector DesiredLocation)
 	{
 		if (bIsUnbound)
-			DesiredLocation;
+			return DesiredLocation;
 
 		FVector origin = GetActorLocation();
 		float xClamped = FMath::Clamp(DesiredLocation.X, origin.X, origin.X + XGridSize * VoxelSize);
@@ -1052,9 +1061,11 @@ public:
 
 
 	// AI Utility Functions
-
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	FVector FindRandomPointFromActorInNavWorld(AActor* Actor, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude = -1.f, float MaxZAngularDispacement = 15.f, int32 MaxAttempts = 5);
+
+	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
+	FVector FindRandomPointAroundOriginInNavWorld(AActor* NavigationActor, FVector Origin, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude = -1.f, float MaxZAngularDispacement = 15.f, int32 MaxAttempts = 5);
 
 	/* This is an edge case where the goal is beneath the landscape (and therefore can never be reached). This situation should be identified pre-emptively and dealt with to prevent a futile and expensive call*/
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")

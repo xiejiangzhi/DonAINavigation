@@ -144,7 +144,7 @@ FBT_FlyToTarget* UBTTask_FlyTo::TaskMemoryFromGenericPayload(void* GenericPayloa
 	// inside which we store the pathfinding results.
 
 	auto payload = static_cast<FBT_FlyToTarget_Metadata*> (GenericPayload);
-	auto ownerComp = payload ? payload->OwnerComp.Get() : NULL;
+	auto ownerComp = (payload && payload->OwnerComp.IsValid()) ? payload->OwnerComp.Get() : NULL;
 
 	// Is the pawn's BrainComponent still alive and valid?
 	if (!ownerComp)
@@ -299,9 +299,13 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 		// Goal reached?
 		if (MyMemory->solutionTraversalIndex == queryResults.PathSolutionOptimized.Num() - 1)
 		{
-			UBlackboardComponent* blackboard = pawn->GetController()->FindComponentByClass<UBlackboardComponent>();
-			blackboard->SetValueAsBool(FlightResultKey.SelectedKeyName, true);
-			blackboard->SetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName, !blackboard->GetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName));
+			auto controller = pawn->GetController();
+			auto blackboard = controller ? controller->FindComponentByClass<UBlackboardComponent>() : NULL;
+			if (blackboard)
+			{
+				blackboard->SetValueAsBool(FlightResultKey.SelectedKeyName, true);
+				blackboard->SetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName, !blackboard->GetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName));
+			}
 
 			// Unregister all dynamic collision listeners. We've completed our task and are no longer interested in listening to these:
 			NavigationManager->StopListeningToDynamicCollisionsForPath(MyMemory->DynamicCollisionListener, queryResults);

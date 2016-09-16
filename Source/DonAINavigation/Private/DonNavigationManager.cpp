@@ -44,11 +44,11 @@ ADonNavigationManager::ADonNavigationManager(const FObjectInitializer& ObjectIni
 	Billboard = ObjectInitializer.CreateDefaultSubobject<UBillboardComponent>(this, TEXT("Billboard"));	
 	//static ConstructorHelpers::FObjectFinder<UTexture2D> BillboardTexture(TEXT("Texture2D'/Game/AI/NavigationVolumes/Navigation_Volumer_Aerial.Navigation_Volumer_Aerial'"));
 	//Billboard->Sprite = BillboardTexture.Object;
-	Billboard->AttachTo(RootComponent);	
+	Billboard->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 
 	// World Boundary Visualizer:
 	WorldBoundaryVisualizer = ObjectInitializer.CreateDefaultSubobject<UBoxComponent>(this, TEXT("WorldBoundaryVisualizer"));	
-	WorldBoundaryVisualizer->AttachTo(RootComponent);	
+	WorldBoundaryVisualizer->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 	WorldBoundaryVisualizer->SetVisibility(bDisplayWorldBoundary);
 	WorldBoundaryVisualizer->SetHiddenInGame(true);	
 	WorldBoundaryVisualizer->SetCollisionProfileName(FName("NoCollision"));
@@ -69,6 +69,19 @@ ADonNavigationManager::ADonNavigationManager(const FObjectInitializer& ObjectIni
 
 	ObstacleQueryChannels.Add(ECC_WorldStatic);
 	ObstacleQueryChannels.Add(ECC_WorldDynamic);
+
+	AutoCorrectionGuessList.Reserve(12);
+	AutoCorrectionGuessList.Add(20);
+	AutoCorrectionGuessList.Add(40);
+	AutoCorrectionGuessList.Add(60);
+	AutoCorrectionGuessList.Add(100);
+	AutoCorrectionGuessList.Add(150);
+	AutoCorrectionGuessList.Add(200);
+	AutoCorrectionGuessList.Add(250);
+	AutoCorrectionGuessList.Add(375);
+	AutoCorrectionGuessList.Add(450);
+	AutoCorrectionGuessList.Add(500);
+	AutoCorrectionGuessList.Add(1000);
 }
 
 // Helper code
@@ -1239,16 +1252,17 @@ bool ADonNavigationManager::IsDirectPathSweep(UPrimitiveComponent* CollisionComp
 	TArray<FHitResult> OutHits;
 
 	const bool bTraceComplex = false;
-	FComponentQueryParams collisionParams(FName("IsDirectPathSweep"), bTraceComplex);
+	FComponentQueryParams collisionParams(FName("IsDirectPathSweep"));
+	collisionParams.bTraceComplex = bTraceComplex;	
 	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
 	collisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
 	collisionParams.AddIgnoredComponent(CollisionComponent);
 
-	if (CollisionShapeInflation == 0.f)
+	/*if (CollisionShapeInflation == 0.f)
 	{
 		bHit = GetWorld()->ComponentSweepMulti(OutHits, CollisionComponent, Start, End, FRotator(), collisionParams);
 	}
-	else
+	else*/
 	{
 		// Prepare inflated collision shape
 		const FCollisionShape& collisionShape = CollisionComponent->GetCollisionShape(CollisionShapeInflation);
@@ -1313,7 +1327,8 @@ bool ADonNavigationManager::IsDirectPathSweepShape(const FCollisionShape& Shape,
 	TArray<FHitResult> OutHits;
 
 	const bool bTraceComplex = false;
-	FComponentQueryParams collisionParams(FName("IsDirectPathSweepShape"), bTraceComplex);
+	FComponentQueryParams collisionParams(FName("IsDirectPathSweepShape"));
+	collisionParams.bTraceComplex = bTraceComplex;
 	collisionParams.bFindInitialOverlaps = bFindInitialOverlaps; // Note:- Initial overlaps can be filtered from results by checking "hit.bStartPenetrating"	
 	collisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
 
@@ -1426,6 +1441,9 @@ static bool PathSolutionFromVolumeTrajectoryMap(FDonNavigationVoxel* OriginVolum
 
 	while (nextVolume)
 	{
+		if (VolumeSolution.Contains(*nextVolume))
+			break;
+
 		VolumeSolution.Insert(*nextVolume, 0);
 		PathSolution.Insert((*nextVolume)->Location, 0);
 
@@ -1590,9 +1608,7 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVector(FVector &DesiredLocati
 	const int32 numTweaks = 6;
 	FVector locationTweaks[numTweaks] = { FVector(0, 0,  1), FVector( 1, 0, 0), FVector(0,  1, 0),
 										  FVector(0, 0, -1), FVector(-1, 0, 0), FVector(0, -1, 0)
-	};	
-
-	float tweakMagnitudes[3] = { 20, 40, 60 }; // *FMath::FRandRange(0.5f, 2.f);
+	};
 
 	if (volume)
 		return volume; // success
@@ -1604,7 +1620,7 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVector(FVector &DesiredLocati
 	{
 		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
 
-		for (auto tweakMagnitude : tweakMagnitudes)
+		for (auto tweakMagnitude : AutoCorrectionGuessList)
 		{
 			for (const auto& tweakDir : locationTweaks)
 			{
@@ -1632,7 +1648,7 @@ bool ADonNavigationManager::GetClosestNavigableVector(FVector DesiredLocation, F
 	// Long-term goal: Eliminate code duplication between the two GetClosestNavigableVector overloads
 
 	if (bShouldSweep && !CollisionComponent)
-		return NULL;
+		return false;
 
 	ResolvedLocation = VolumeOriginAt(DesiredLocation);
 	
@@ -1710,8 +1726,6 @@ bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &Res
 		FVector(0, 0, -1), FVector(-1, 0, 0), FVector(0, -1, 0)
 	};
 
-	float tweakMagnitudes[3] = { 20, 40, 60 };
-
 	if (bFoundResult)
 		return true; // success
 
@@ -1721,7 +1735,7 @@ bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &Res
 	{
 		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
 
-		for (auto tweakMagnitude : tweakMagnitudes)
+		for (auto tweakMagnitude : AutoCorrectionGuessList)
 		{
 			for (const auto& tweakDir : locationTweaks)
 			{
@@ -1806,7 +1820,7 @@ void ADonNavigationManager::ExpandFrontierTowardsTarget(FDonNavigationQueryTask&
 		return;
 
 	// In reality there are two possible segment distances: side and sqrt(2) * side. As a trade-off between accuracy and performance we're assuming all segments to be only equal to the pixel size (majority case are 6-DOF neighbors)
-	float SegmentDist = VoxelSizeSquared; // Alternate: FVector::DistSquared(Current->Location, Neighbor->Location);
+	float SegmentDist = VoxelSize; // Alternate: FVector::DistSquared(Current->Location, Neighbor->Location);
 	
 	uint32 newCost = *Task.Data.VolumeVsCostMap.Find(Current) + SegmentDist;
 	uint32* volumeCost = Task.Data.VolumeVsCostMap.Find(Neighbor);
@@ -1816,7 +1830,7 @@ void ADonNavigationManager::ExpandFrontierTowardsTarget(FDonNavigationQueryTask&
 		Task.Data.VolumeVsGoalTrajectoryMap.Add(Neighbor, Current);
 		Task.Data.VolumeVsCostMap.Add(Neighbor, newCost);
 
-		float heuristic = FVector::DistSquared(Neighbor->Location, Task.Data.Destination);
+		float heuristic = FVector::Dist(Neighbor->Location, Task.Data.Destination);
 		uint32 priority = newCost + heuristic;
 
 		Task.Data.Frontier.put(Neighbor, priority);
@@ -2632,25 +2646,29 @@ void ADonNavigationManager::AppendVolumeListFromRange(FVector Start, FVector End
 
 FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude/* = -1.f*/, float MaxZAngularDispacement/* = 15.f*/, int32 MaxAttempts/* = 5*/)
 {
+	return FindRandomPointAroundOriginInNavWorld(Actor, Actor->GetActorLocation(), Distance, bFoundValidResult, MaxDesiredAltitude, MaxZAngularDispacement, MaxAttempts);
+}
+
+FVector ADonNavigationManager::FindRandomPointAroundOriginInNavWorld(AActor* NavigationActor, FVector Origin, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude/* = -1.f*/, float MaxZAngularDispacement/* = 15.f*/, int32 MaxAttempts/* = 5*/)
+{
 	bFoundValidResult = false;
 
-	if (!Actor)
+	if (!NavigationActor)
 		return FVector::ZeroVector;
-
-	FVector origin = Actor->GetActorLocation();
+	
 	FVector baseDisplacement = FVector::ForwardVector * Distance;
-	FVector newDestination = origin + baseDisplacement;
+	FVector newDestination = Origin + baseDisplacement;
 
 	for (int32 i = 0; i < MaxAttempts; i++)
 	{
 		float maxZAngularDispacement = FMath::Abs(MaxZAngularDispacement);
 		FRotator newDirection = FRotator(FMath::FRandRange(-maxZAngularDispacement, maxZAngularDispacement), FMath::FRandRange(0, 360), FMath::FRandRange(0, 360));
-		newDestination = origin + newDirection.RotateVector(baseDisplacement);
+		newDestination = Origin + newDirection.RotateVector(baseDisplacement);
 
 		if (MaxDesiredAltitude != -1.f)
 			newDestination = FVector(newDestination.X, newDestination.Y, FMath::Clamp(newDestination.Z, newDestination.Z, MaxDesiredAltitude));
 
-		const bool shouldSweep = false;		
+		const bool shouldSweep = false;
 		bool bInitialPositionCollides = false;
 
 		if (IsLocationBeneathLandscape(newDestination))
@@ -2659,18 +2677,18 @@ FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor,
 		if (bIsUnbound)
 		{
 			FVector resolvedDestination;
-			bool bIsResolvable = ResolveVector(newDestination, resolvedDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+			bool bIsResolvable = ResolveVector(newDestination, resolvedDestination, Cast<UPrimitiveComponent>(NavigationActor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
 
 			if (bIsResolvable)
 			{
 				bFoundValidResult = true;
 
 				return newDestination;
-			}			
+			}
 		}
 		else
 		{
-			auto destinationVolume = GetClosestNavigableVolume(newDestination, Cast<UPrimitiveComponent>(Actor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
+			auto destinationVolume = GetClosestNavigableVolume(newDestination, Cast<UPrimitiveComponent>(NavigationActor->GetRootComponent()), bInitialPositionCollides, 0.f, shouldSweep);
 
 			if (destinationVolume)
 			{
@@ -2683,6 +2701,7 @@ FVector ADonNavigationManager::FindRandomPointFromActorInNavWorld(AActor* Actor,
 
 	return FVector::ZeroVector;
 }
+
 
 bool ADonNavigationManager::IsLocationBeneathLandscape(FVector Location, float LineTraceHeight/* = 3000..f*/)
 {

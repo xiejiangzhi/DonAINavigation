@@ -6,7 +6,9 @@ namespace UnrealBuildTool.Rules
 	{
 		public DonAINavigation(TargetInfo Target)
 		{
-			PublicIncludePaths.AddRange(
+            bEnableShadowVariableWarnings = false;
+
+            PublicIncludePaths.AddRange(
 				new string[] {
 					// ... add public include paths required here ...
 				}
@@ -27,6 +29,7 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					// ... add other public dependencies that you statically link with here ...                    
                     "AIModule",
+                    "GameplayTasks",
                     "Engine",
                 }
 				);

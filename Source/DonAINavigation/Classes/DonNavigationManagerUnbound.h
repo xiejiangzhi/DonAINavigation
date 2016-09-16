@@ -25,6 +25,9 @@ class DONAINAVIGATION_API ADonNavigationManagerUnbound : public ADonNavigationMa
 public:
 	ADonNavigationManagerUnbound(const FObjectInitializer& ObjectInitializer);
 
+
+	virtual void BeginPlay() override;
+
 protected:
 	virtual void TickNavigationSolver(FDonNavigationQueryTask& task) override;
 	virtual bool PrepareSolution(FDonNavigationQueryTask& Task) override;

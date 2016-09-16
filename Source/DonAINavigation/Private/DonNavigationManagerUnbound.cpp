@@ -21,6 +21,11 @@ ADonNavigationManagerUnbound::ADonNavigationManagerUnbound(const FObjectInitiali
 	bIsUnbound = true;
 }
 
+void ADonNavigationManagerUnbound::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
 bool ADonNavigationManagerUnbound::PrepareSolution(FDonNavigationQueryTask& Task)
 {
 	if (!bIsUnbound)
@@ -47,6 +52,9 @@ bool ADonNavigationManagerUnbound::PrepareSolution(FDonNavigationQueryTask& Task
 
 	while (nextLocation)
 	{
+		if (data.PathSolutionRaw.Contains(*nextLocation))
+			break; // Needs more testing - this was introduced alongisde the bugfix to the bound manager to prevent infinte loops in PathSolutionFromVolumeTrajectoryMap
+
 		//VolumeSolution.Insert(*nextLocation, 0);
 		data.PathSolutionRaw.Insert((*nextLocation), 0);
 
@@ -226,7 +234,7 @@ void ADonNavigationManagerUnbound::ExpandFrontierTowardsTarget(FDonNavigationQue
 	}
 
 	// In reality there are two possible segment distances: side and sqrt(2) * side. As a trade-off between accuracy and performance we're assuming all segments to be only equal to the pixel size (majority case are 6-DOF neighbors)
-	float SegmentDist = VoxelSizeSquared; // Alternate: FVector::DistSquared(Current->Location, Neighbor->Location);
+	float SegmentDist = VoxelSize; // Alternate: FVector::DistSquared(Current->Location, Neighbor->Location);
 
 	uint32 newCost = *Task.Data.VolumeVsCostMap_Unbound.Find(Current) + SegmentDist;
 	uint32* volumeCost = Task.Data.VolumeVsCostMap_Unbound.Find(Neighbor);
@@ -238,7 +246,7 @@ void ADonNavigationManagerUnbound::ExpandFrontierTowardsTarget(FDonNavigationQue
 
 		//UE_LOG(DoNNavigationLog, Warning, TEXT("[SOLVER] Neighbor new cost: %d"), newCost);
 
-		float heuristic = FVector::DistSquared(Neighbor, Task.Data.Destination);
+		float heuristic = FVector::Dist(Neighbor, Task.Data.Destination);
 		uint32 priority = newCost + heuristic;
 
 		Task.Data.Frontier_Unbound.put(Neighbor, priority);
