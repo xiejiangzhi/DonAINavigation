@@ -1,4 +1,4 @@
-Note:- Master branch is for Unreal 4.11 only. Use the new 4.12 branch if you need to build for 4.12.
+Note:- Master branch is for Unreal 4.13. Use the new 4.12 branch if you need to build for 4.12.
 
 =============================================
 DoN AI Navigation Plugin for Unreal Engine 4
