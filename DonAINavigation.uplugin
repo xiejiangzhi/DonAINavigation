@@ -19,7 +19,8 @@
 	[
 		{
 			"Name" : "DonAINavigation",
-			"Type" : "Runtime"
+			"Type" : "Runtime",
+			"LoadingPhase" : "PreDefault"
 		}
 	]
 }
