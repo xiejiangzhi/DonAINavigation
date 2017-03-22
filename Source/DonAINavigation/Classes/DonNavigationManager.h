@@ -35,7 +35,8 @@ enum class EDonNavigationQueryStatus : uint8
 struct FDonNavigationDynamicCollisionNotifyee;
 
 /**
-*
+* This is the basic unit of pathfinding for Finite Worlds.
+* Infinite Worlds (Unbound Manager) rely directly on FVectors
 */
 USTRUCT()
 struct FDonNavigationVoxel
@@ -43,20 +44,16 @@ struct FDonNavigationVoxel
 	GENERATED_USTRUCT_BODY()	
 	
 	int32 X;
-
 	int32 Y;
-
 	int32 Z;
 
 	FVector Location;
-
 	uint8 NumResidents = 0;
-
 	bool bIsInitialized = false;
 	
 	TArray<FDonNavigationDynamicCollisionNotifyee> DynamicCollisionNotifyees;
 
-	bool FORCEINLINE CanNavigate() { return NumResidents == 0; }	
+	bool FORCEINLINE CanNavigate() { return NumResidents == 0; }
 
 	void SetNavigability(bool CanNavigate)
 	{
@@ -76,6 +73,12 @@ struct FDonNavigationVoxel
 	FDonNavigationVoxel(){}	
 };
 
+/*
+* Approximates the collision geometry of a mesh in the form of voxels.
+* This is only used when a pawn's collision body exceeds exceeds a "unit voxel volume" for the world.
+* For maximum performance it is recommended to tune the manager's VoxelSize to a value that roughly approximates your pawn's collision body.
+* If that is done correctly, this struct is never used as all collision checks for the pawn are inferred directly around its origin.
+*/
 USTRUCT()
 struct FDonVoxelCollisionProfile
 {
@@ -85,13 +88,17 @@ struct FDonVoxelCollisionProfile
 
 	/** 
 	* Note:- These references are only valid so long as NAVVolumeData (see ADonNavigationManager) is not modified in any way.
-	* Presently, NAVVolumeData is populated once and only once (at the beginning of the game) so these referenfecs _should_ be safe to rely upon.
+	* Presently, NAVVolumeData is populated once and only once (at the beginning of the game) and with this model, the references are safe to rely upon.
 	*/	
 
 	TArray<FDonNavigationVoxel*> WorldVoxelsOccupied;
 
 };
 
+/** 
+* Collision payloads are any generic set of data passed from an external source (eg: The Behavior Tree "Fly To" node provided with this plugin) to the manager.
+* They are passed back via callbacks to anyone listening to the manager's query results, dynamic collision updates and other such callbacks.
+*/
 USTRUCT()
 struct FDonNavigationDynamicCollisionPayload
 {
@@ -109,6 +116,7 @@ struct FDonNavigationDynamicCollisionPayload
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDonNavigationDynamicCollisionDelegate, const FDonNavigationDynamicCollisionPayload&, Data); // note: non-dynamic delegate can't be used as a function parameter apparently
 
+/* This Collision Notifyee struct contains the delegate for any class listening to dynamic collisions and the paylaod provided by that class */
 USTRUCT()
 struct FDonNavigationDynamicCollisionNotifyee
 {
@@ -132,8 +140,8 @@ struct FDonNavigationDynamicCollisionNotifyee
 	}
 };
 
-// @todo: convert to regular struct and profile startup speed. Usinng a USTRUCT for these may be excessive
-
+// Finite World data structure:
+// Nested Structs for aggregating world voxels across three axes:
 USTRUCT()
 struct FDonNavVoxelY
 {
@@ -151,7 +159,6 @@ struct FDonNavVoxelY
 	{
 	}
 };
-
 
 USTRUCT()
 struct FDonNavVoxelX
@@ -202,6 +209,9 @@ struct FDonNavVoxelXYZ
 	}	
 };
 
+/**
+* These parameters are passed by end users (via direct API calls or via the "Fly To" Behavior Tree node) to customize various aspects of this pathfinding system
+*/
 USTRUCT()
 struct FDoNNavigationQueryParams
 {
@@ -214,6 +224,11 @@ struct FDoNNavigationQueryParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
 	float QueryTimeout = 3.f;
 
+	/* 
+	*  If enabled, your A.I.'s origin or destination will be slightly nudged to accommodate tricky scenarios where
+	*  your A.I. needs to start or finish its pathfinding flush with a collision body (eg: hiding right next to a wall)
+	* The magnitude of nudging can be configured directly in the Navigation Manager's AutoCorrectionGuessList variable
+	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
 	bool bFlexibleOriginGoal = true;
 
@@ -233,6 +248,13 @@ struct FDoNNavigationQueryParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
 	bool bPreciseDynamicCollisionRepathing = false;
 
+	/** If the destination can be reached via straight line travel, then skip creation of dynamic collision listeners and repathing
+	*    to maximize performance. However, advanced usecases (like the sample project's over-the-top multi-rocket dodging example)
+	*    may need dynamic repathing even for straight-line travel. In such a case you should set this variable to false
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
+	bool bIgnoreDynamicCollisionRepathingForDirectGoals = true;
+
 	/** Allows you to inflate your mesh's collision extents by a fixed increment for all sweep based testing.
 	*   Typically used if you find your mesh bumping into obstacles while navigating along path solutions.
 	*/
@@ -251,11 +273,7 @@ struct FDoNNavigationQueryParams
 	*   Typically used for passing unqiue identifiers in situations where you can't otherwise identify the task owner
 	*   (Eg: Behavior tree singleton nodes)
 	*/
-	void* CustomDelegatePayload = NULL;
-
-	//
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation")
-	bool bTemp_WalkSolution = false;
+	void* CustomDelegatePayload = NULL;	
 
 	FDoNNavigationQueryParams()
 	{
@@ -263,7 +281,7 @@ struct FDoNNavigationQueryParams
 	}	
 };
 
-
+/** Navigation Query Debug Parameters  */
 USTRUCT()
 struct FDoNNavigationDebugParams
 {
@@ -300,26 +318,32 @@ struct FDoNNavigationDebugParams
 	}
 };
 
-struct FLocVector : public FVector
+/** This structure is simply a wrapper around FVector that implements a dummy comparison operator enabling its use with an std::pair driven priority queue*/
+struct FDonNavigationLocVector : public FVector
 {
-	FLocVector(){}
+	FDonNavigationLocVector(){}
 
-	FLocVector(FVector Vector)
+	FDonNavigationLocVector(FVector Vector)
 	{
 		X = Vector.X;
 		Y = Vector.Y;
 		Z = Vector.Z;
 	}
 
-	friend bool operator< (const FLocVector& A, const FLocVector& B)
+	friend bool operator< (const FDonNavigationLocVector& A, const FDonNavigationLocVector& B)
 	{
-		// This function is simply a workaround for enabling use of FVector type with priority queue.
-		// The value returned is irrelevant:
+		// This function is simply a workaround for enabling use of FVector type with an std::pair priority queue.
+		// The value returned is irrelevant because we will be using this as the second element of the std::pair
+		// where the only first element is actually relevant for comparison.
 
 		return false;
 	}
 };
 
+/** 
+* Encapsulates all the data relevant for a single navigation query request. 
+  Some variables in this are updated in real-time per tick as the navigation solver sequentially processes each task in its queue
+*/
 USTRUCT(BlueprintType)
 struct FDoNNavigationQueryData
 {
@@ -359,9 +383,9 @@ struct FDoNNavigationQueryData
 	TMap<FDonNavigationVoxel*, uint32> VolumeVsCostMap;
 	TMap<FDonNavigationVoxel*, FDonNavigationVoxel*> VolumeVsGoalTrajectoryMap;
 
-	DoNNavigation::PriorityQueue<FLocVector> Frontier_Unbound;
-	TMap<FLocVector, uint32> VolumeVsCostMap_Unbound;
-	TMap<FLocVector, FLocVector> VolumeVsGoalTrajectoryMap_Unbound;
+	DoNNavigation::PriorityQueue<FDonNavigationLocVector> Frontier_Unbound;
+	TMap<FDonNavigationLocVector, uint32> VolumeVsCostMap_Unbound;
+	TMap<FDonNavigationLocVector, FDonNavigationLocVector> VolumeVsGoalTrajectoryMap_Unbound;
 
 	// Optimization state variables
 	bool bOptimizationInProgress = false;
@@ -417,14 +441,10 @@ struct FDoNNavigationQueryData
 
 };
 
-// Non-Dynamic verison of result delegate: 
-//
-// DECLARE_DELEGATE_OneParam( FDoNNavigationResultHandler, const FDoNNavigationQueryData& )
-//
-// Consider enabling this for C++ users depending on performance implications of the currently used dynamic delegates (Epic documentation states dynamic delegates are slower).
-// This will require maintenance of two sets of delegate types across the board and a separate API entry point for C++/BP users (UFUNCTIONs only accept dynamic delegate parameters).
-// @todo: profile this with high volume load once the system is stable to verify if there are any notable performance benefits in using static delegates.
-
+/** 
+* Result Handler Delegate: This is used by the Navigation Manager for signialling to API callers/BT nodes/etc that a navigation query is complete 
+* and that the pawn can now consume the path solution to navigate to its goal
+*/
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDoNNavigationResultHandler, const FDoNNavigationQueryData&, Data);
 
 USTRUCT()
@@ -435,6 +455,9 @@ struct FDonNavigationTask
 	virtual void BroadcastResult() {}
 };
 
+/**
+* Represents a single navigation task. These are contained in a queue and solved with a fixed number of solver iterations allocated to each task still pending in the queue
+*/
 USTRUCT()
 struct FDonNavigationQueryTask : public FDonNavigationTask
 {
@@ -479,7 +502,6 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 	}
 };
 
-//DECLARE_DYNAMIC_DELEGATE(FDonCollisionSamplerCallback);
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDonCollisionSamplerCallback, bool, bTaskSuccessful);
 
 struct FDonMeshIdentifier
@@ -681,11 +703,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
 	TArray<AActor*> ActorsToIgnoreForCollision;
 
-	/* Some pathfinding scenarios need a special auto-correction to be applied to either origin or 
+	/* 
+	* Some pathfinding scenarios need a special auto-correction to be applied to either origin or 
 	* destination for pathfinding to work. Eg: If a player is hiding flush with a wall then the pathfinding origin
 	* must be offset slightly adjacent to the wall.
+	*
 	* Different games/maps will need different auto-correction values, some maps may need large correction values
-	* while others may need only small adjustments. Tweak this list based on your game's needs.*/
+	* while others may need only small adjustments. Tweak this list based on your game's needs.
+	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
 	TArray<float> AutoCorrectionGuessList;
 
@@ -713,14 +738,11 @@ public:
 	// World generation
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
 	void ConstructBuilder();
-
-	// Debug helpers:
-
+	
+	// Debug Visualization:
 	UPROPERTY()
 	UBoxComponent* WorldBoundaryVisualizer;
-
-	/* This property will help you identify issues with your dynamic collision setup by performinge extra vaildations at run-time.
-	This can be expensive so it is disabled by default. Enable if, for example, your pawns are reacting to dynamic collisions that they shouldn't actually be interested in.*/
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDisplayWorldBoundary = true;
 
@@ -730,6 +752,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	float DebugVoxelsLineThickness = 2.f;
 
+	/* This property will help you identify issues with your dynamic collision setup by performinge extra vaildations at run-time.
+	This can be expensive so it is disabled by default. Enable if, for example, your pawns are reacting to dynamic collisions that they shouldn't actually be interested in.*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bRunDebugValidationsForDynamicCollisions = false;
 
@@ -885,8 +909,10 @@ public:
 			return NULL;
 	}
 
-	/* Fetch volume by index. Unsafe, because it assumes that you've already checked index validity. It is faster, but will crash with invalid input
-	   i.e. similar to Unreal's GetUnsafeNormal() function */
+	/* 
+	* Fetch volume by index. Unsafe, because it assumes that you've already checked index validity. It is faster, but will crash with invalid input
+	 *  i.e. similar to Unreal's GetUnsafeNormal() function
+	 */
 	inline FDonNavigationVoxel& VolumeAtUnsafe(int32 x, int32 y, int32 z)
 	{
 		return NAVVolumeData.X[x].Y[y].Z[z];
@@ -904,7 +930,7 @@ public:
 		return VolumeAtSafe(x, y, z);
 	}
 
-	/* Clamps a vector to the navigation bounds as defined by the grid configuraiton of the navigation object you've placed in the map*/
+	/* Clamps a vector to the navigation bounds as defined by the grid configuration of the navigation object you've placed in the map*/
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	FVector ClampLocationToNavigableWorld(FVector DesiredLocation)
 	{
@@ -976,7 +1002,7 @@ public:
 	*  moves, scales or morphs in any way that affects the collision. Always remember that the DoN Navigation system does not automatically detect dynamic voxel collision
 	*  as that would be too expensive for the system to manage (potentially millions of voxels reside in a scene). Therefore it relies on users of the plugin to manually
 	*  trigger dynamic collision depending on the unique needs of a particular project. You only need this for any object that moves after the game has begun, voxel collision
-	*  for static objects is exempt from this as they're mananged through a different code path and lazy-loaded on demand.
+	*  for static objects is exempt from this as they're managed through a different code path and lazy-loaded on demand.
 	*
 	*  This function is expensive as it samples per-voxel collision so use it with care.
 	*
@@ -990,14 +1016,14 @@ public:
 	*											  1. Multiple meshes with identical collision properties will end up creating individual entries in the cache despite being the same (collision wise).
 	*											  2. Any mesh that needs to change its rotation or scale cannot use the default cache value which only works for location based translations.
 	*
-	*                                             The first limitation can be easily sovled by sharing a single cache identifier across all meshes of the same type (Eg: "SolidWall_NoRotation").
+	*                                             The first limitation can be easily solved by sharing a single cache identifier across all meshes of the same type (Eg: "SolidWall_NoRotation").
 	*                                             The second limitation can be resolved either by forcibly reloading the collision cache each time using bReloadCollisionCache (not recommended, very expensive) 
 	*                                             OR you can use the Custom Cache Identifier to define cardinal translation points for your mesh as follows:	
 	*                                             Eg: Mesh Scale = 1.5f -> CustomCacheIdentifier = "SolidWall_NoRotation_150p", 
 	*                                             Eg: Mesh Scale = 2.0f -> CustomCacheIdentifier = "SolidWall_NoRotation_200p", etc. 
 	*                                             Using this technique instead of forcibly reloading the cache will improve your performance. Try to keep your identifiers short though!
 	*
-	*  @param  bReplaceExistingTask               By default the scheduler will ignore new tasks for a mesh if it already has one running. Use this to forcibly repalce an existing task.
+	*  @param  bReplaceExistingTask               By default the scheduler will ignore new tasks for a mesh if it already has one running. Use this to forcibly replace an existing task.
 	*                                             This is useful for advanced usecases where you're relying on the sequence of dynamic collision updates or triggering other events dependent on its success
 	*
 	*  @param  bReloadCollisionCache			  Default is false. The system maintains a cache of voxel collision profiles associated with a mesh. A cache entry is created for a mesh
@@ -1021,6 +1047,13 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
 	void StopListeningToDynamicCollisionsForPath(FDonNavigationDynamicCollisionDelegate ListenerToClear, UPARAM(ref) const FDoNNavigationQueryData& QueryData);
+
+	/** 
+	* Similar to StopListeningToDynamicCollisionsForPath, but operates on a single index. If you're using the pathfinding API directly, use this to "clean up" behind your pawn as it passes dynamic collision geometry
+	* (For users using the "Fly To" behavior tree node you don't need to worry about this as all cleanup is taken care of for you)
+	*/	
+	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
+	void StopListeningToDynamicCollisionsForPathIndex(FDonNavigationDynamicCollisionDelegate ListenerToClear, UPARAM(ref) const FDoNNavigationQueryData& QueryData, const int32 VolumeIndex);
 	
 	void VoxelCacheClearByKey(const FDonMeshIdentifier &MeshId)
 	{
@@ -1067,7 +1100,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	FVector FindRandomPointAroundOriginInNavWorld(AActor* NavigationActor, FVector Origin, float Distance, bool& bFoundValidResult, float MaxDesiredAltitude = -1.f, float MaxZAngularDispacement = 15.f, int32 MaxAttempts = 5);
 
-	/* This is an edge case where the goal is beneath the landscape (and therefore can never be reached). This situation should be identified pre-emptively and dealt with to prevent a futile and expensive call*/
+	/* This is an edge case where the goal is beneath the landscape (and therefore can never be reached). This situation should be identified preemptively and dealt with to prevent a futile and expensive call*/
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	bool IsLocationBeneathLandscape(FVector Location, float LineTraceHeight = 3000.f);
 
@@ -1098,6 +1131,7 @@ private:
 	void TickScheduledCollisionTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick);
 
 protected:
+	// These virtual functions are overridden for the Finite and Infinite implementations of the plugin (see DonNavigationManager.cpp and DonNavigationManagerUnbound.cpp)
 	virtual void TickNavigationSolver(FDonNavigationQueryTask& task);
 	virtual bool PrepareSolution(FDonNavigationQueryTask& Task);
 
@@ -1107,6 +1141,7 @@ private:
 	void TickVoxelCollisionSampler(FDonNavigationDynamicCollisionTask& Task);
 	void ExpandFrontierTowardsTarget(FDonNavigationQueryTask& Task, FDonNavigationVoxel* Current, FDonNavigationVoxel* Neighbor);
 	void PackageRawSolution(FDonNavigationQueryTask& task);
+	void PackageDirectSolution(FDonNavigationQueryTask& Task);
 
 	// Thread-aware routines
 	FCriticalSection CriticalSection_Pathing;
@@ -1132,10 +1167,12 @@ private:
 	FDonNavigationVoxel* AppendVolumeList(FVector Location, FDonNavigationQueryTask& task);
 	void AppendVolumeListFromRange(FVector Start, FVector End, FDonNavigationQueryTask& task);
 
-	FDonNavigationVoxel* ResolveVector(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
+	// Finite World: (think in terms of Volumes)
+	FDonNavigationVoxel* ResolveVolume(FVector &DesiredLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
 	FDonNavigationVoxel* GetClosestNavigableVolume(FVector DesiredLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);	
 	FDonNavigationVoxel* GetBestNeighborRecursive(FDonNavigationVoxel* Volume, int32 CurrentDepth, int32 NeighborSearchMaxDepth, FVector Location, UPrimitiveComponent* CollisionComponent, bool bConsiderInitialOverlaps, float CollisionShapeInflation, bool bShouldSweep);
 
+	// Infinite World: (think in terms of Vectors)
 	bool ResolveVector(FVector &DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
 	bool GetClosestNavigableVector(FVector DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
 
