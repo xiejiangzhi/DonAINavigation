@@ -17,11 +17,12 @@
 #include <functional>
 #include <queue>
 #include <vector>
-#include "AllowWindowsPlatformTypes.h"
+
+//#include "Engine.h"
 
 namespace DoNNavigation
 {
-	// Priority Queue for the pathfinding algorithm to use:
+	// Priority Queue for pathfinding:
 	template<typename T, typename Number = uint32>
 	struct PriorityQueue {
 		typedef std::pair<Number, T> PQElement;
@@ -40,8 +41,7 @@ namespace DoNNavigation
 		}
 	};
 
-	// Debug timer functions for profiling parts of the plugin that aren't easily profiled via Unreal's profiler
-	// Eg: For profiling initial collision sampling on map load, etc
+	// Debug timer with high precision
 	static FORCEINLINE uint64 Debug_GetTimeMs64()
 	{
 #ifdef _WIN32
