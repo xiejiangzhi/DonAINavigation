@@ -320,7 +320,8 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 
 			// Because we just completed a segment, we should stop listening to collisions on the previous voxel. 
 			// If not, a pawn may needlessly recalculate its solution when a obstacle far behind it intrudes on a voxel it has already visited.
-			NavigationManager->StopListeningToDynamicCollisionsForPathIndex(MyMemory->DynamicCollisionListener, queryResults, MyMemory->solutionTraversalIndex - 1);
+			if(!NavigationManager->bIsUnbound)
+				NavigationManager->StopListeningToDynamicCollisionsForPathIndex(MyMemory->DynamicCollisionListener, queryResults, MyMemory->solutionTraversalIndex - 1);
 
 			if (MyMemory->bIsANavigator)
 			{

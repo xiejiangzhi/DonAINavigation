@@ -2080,8 +2080,11 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 		// Input Visualization - II
 		if (DebugParams.DrawDebugVolumes)
 		{
-			DrawDebugVoxel_Safe(GetWorld(), originVolume->Location, NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
-			DrawDebugVoxel_Safe(GetWorld(), destinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
+			if(originVolume)
+				DrawDebugVoxel_Safe(GetWorld(), originVolume->Location, NavVolumeExtent(), FColor::White, false, 0.13f, 0, DebugVoxelsLineThickness);
+
+			if(destinationVolume)
+				DrawDebugVoxel_Safe(GetWorld(), destinationVolume->Location, NavVolumeExtent(), FColor::Green, false, 0.13f, 0, DebugVoxelsLineThickness);
 		}
 	}
 	else
