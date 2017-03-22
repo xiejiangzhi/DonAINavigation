@@ -16,9 +16,7 @@ namespace UnrealBuildTool.Rules
 
 			PrivateIncludePaths.AddRange(
 				new string[] {
-					"DonAINavigation/Private",
-                    "DonAINavigation/Private/Multithreading",
-					// ... add other private include paths required here ...                    
+					// ... add other private include paths required here ...
                 }
 				);
 

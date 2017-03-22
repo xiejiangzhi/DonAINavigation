@@ -12,10 +12,9 @@
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include "DonAINavigationPrivatePCH.h"
+#include "../DonAINavigationPrivatePCH.h"
 
 #include "DonNavigatorInterface.h"
-
 #include "BehaviorTree/BTTask_FlyTo.h"
 
 #include "BehaviorTree/BlackboardComponent.h"
@@ -107,9 +106,6 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 
 	if (bTaskScheduled)
 	{
-		/*if(myMemory->QueryResults.QueryStatus != EDonNavigationQueryStatus::Success) // for simple paths the scheduler may have already solved the path synchronously
-			myMemory->QueryResults.QueryStatus = EDonNavigationQueryStatus::InProgress;*/
-
 		return EBTNodeResult::InProgress;
 	}
 	else
@@ -322,8 +318,9 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 		{
 			MyMemory->solutionTraversalIndex++;
 
-			// @todo: because we just completed a segment, we should stop listening to collisions on the previous voxel. 
-			// If not, a pawn may needlessly recalcualte its solution when a obstacle far behind it intrudes on a voxel it has already visited.
+			// Because we just completed a segment, we should stop listening to collisions on the previous voxel. 
+			// If not, a pawn may needlessly recalculate its solution when a obstacle far behind it intrudes on a voxel it has already visited.
+			NavigationManager->StopListeningToDynamicCollisionsForPathIndex(MyMemory->DynamicCollisionListener, queryResults, MyMemory->solutionTraversalIndex - 1);
 
 			if (MyMemory->bIsANavigator)
 			{

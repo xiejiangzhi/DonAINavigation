@@ -17,6 +17,11 @@
 
 #include "DonNavigationManagerUnbound.generated.h"
 
+/*
+* Infinite Worlds! This is the unbound version of the Navigation Manager.
+* Supports unlimited map sizes. Nothing is cached, everything is looked up on-demand and for procedural games it fully eliminates the burden of having to manage dynamic collision updates.
+* It is obviously slower than the Finite World equivalent but will benefit projects with huge maps or highly dynamic/frequently changing/procedural collision geometry.
+*/
 UCLASS()
 class DONAINAVIGATION_API ADonNavigationManagerUnbound : public ADonNavigationManager
 {
@@ -24,7 +29,6 @@ class DONAINAVIGATION_API ADonNavigationManagerUnbound : public ADonNavigationMa
 
 public:
 	ADonNavigationManagerUnbound(const FObjectInitializer& ObjectInitializer);
-
 
 	virtual void BeginPlay() override;
 
