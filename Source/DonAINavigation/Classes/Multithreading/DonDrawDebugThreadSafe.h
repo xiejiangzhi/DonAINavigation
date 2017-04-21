@@ -26,8 +26,8 @@ struct FDrawDebugLineRequest
 
 	FDrawDebugLineRequest() {}
 
-	FDrawDebugLineRequest(FVector LineStart, FVector LineEnd, FColor Color, bool bPersistentLines, float LifeTime, uint8 DepthPriority, float Thickness)
-		: LineStart(LineStart), LineEnd(LineEnd), Color(Color), bPersistentLines(bPersistentLines), LifeTime(LifeTime), DepthPriority(DepthPriority), Thickness(Thickness)
+	FDrawDebugLineRequest(FVector LineStartIn, FVector LineEndIn, FColor ColorIn, bool bPersistentLinesIn, float LifeTimeIn, uint8 DepthPriorityIn, float ThicknessIn)
+		: LineStart(LineStartIn), LineEnd(LineEndIn), Color(ColorIn), bPersistentLines(bPersistentLinesIn), LifeTime(LifeTimeIn), DepthPriority(DepthPriorityIn), Thickness(ThicknessIn)
 	{
 
 	}
@@ -43,8 +43,8 @@ struct FDrawDebugPointRequest
 
 	FDrawDebugPointRequest() {}
 
-	FDrawDebugPointRequest(FVector PointLocation, float PointThickness, FColor Color, bool bPersistentLines, float LifeTime)
-		: PointLocation(PointLocation), PointThickness(PointThickness), Color(Color), bPersistentLines(bPersistentLines), LifeTime(LifeTime)
+	FDrawDebugPointRequest(FVector PointLocationIn, float PointThicknessIn, FColor ColorIn, bool bPersistentLinesIn, float LifeTimeIn)
+		: PointLocation(PointLocationIn), PointThickness(PointThicknessIn), Color(ColorIn), bPersistentLines(bPersistentLinesIn), LifeTime(LifeTimeIn)
 	{
 
 	}
@@ -62,8 +62,8 @@ struct FDrawDebugVoxelRequest
 
 	FDrawDebugVoxelRequest() {}
 
-	FDrawDebugVoxelRequest(FVector Center, FVector Box, FColor Color, bool bPersistentLines, float LifeTime, uint8 DepthPriority, float Thickness)
-		: Center(Center), Box(Box), Color(Color), bPersistentLines(bPersistentLines), LifeTime(LifeTime), DepthPriority(DepthPriority), Thickness(Thickness)
+	FDrawDebugVoxelRequest(FVector CenterIn, FVector BoxIn, FColor ColorIn, bool bPersistentLinesIn, float LifeTimeIn, uint8 DepthPriorityIn, float ThicknessIn)
+		: Center(CenterIn), Box(BoxIn), Color(ColorIn), bPersistentLines(bPersistentLinesIn), LifeTime(LifeTimeIn), DepthPriority(DepthPriorityIn), Thickness(ThicknessIn)
 	{
 
 	}
@@ -80,8 +80,8 @@ struct FDrawDebugSphereRequest
 
 	FDrawDebugSphereRequest() {}
 
-	FDrawDebugSphereRequest(FVector Center, float Radius, float Segments, FColor Color, bool bPersistentLines, float LifeTime)
-		: Center(Center), Radius(Radius), Segments(Segments), Color(Color), bPersistentLines(bPersistentLines), LifeTime(LifeTime)
+	FDrawDebugSphereRequest(FVector CenterIn, float RadiusIn, float SegmentsIn, FColor ColorIn, bool bPersistentLinesIn, float LifeTimeIn)
+		: Center(CenterIn), Radius(RadiusIn), Segments(SegmentsIn), Color(ColorIn), bPersistentLines(bPersistentLinesIn), LifeTime(LifeTimeIn)
 	{
 
 	}

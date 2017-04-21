@@ -17,7 +17,10 @@
 #include <functional>
 #include <queue>
 #include <vector>
+
+#if PLATFORM_WINDOWS
 #include "AllowWindowsPlatformTypes.h"
+#endif
 
 namespace DoNNavigation
 {
@@ -87,3 +90,7 @@ namespace DoNNavigation
 		timer = Debug_GetTimeMs64() - timer;
 	}
 }
+
+#if PLATFORM_WINDOWS
+#include "HideWindowsPlatformTypes.h"
+#endif
