@@ -111,7 +111,7 @@ struct FDonNavigationDynamicCollisionPayload
 
 	FDonNavigationDynamicCollisionPayload(){}
 
-	FDonNavigationDynamicCollisionPayload(void* CustomDelegatePayload, FDonNavigationVoxel Voxel) : CustomDelegatePayload(CustomDelegatePayload), Voxel(Voxel){}
+	FDonNavigationDynamicCollisionPayload(void* CustomDelegatePayloadIn, FDonNavigationVoxel VoxelIn) : CustomDelegatePayload(CustomDelegatePayloadIn), Voxel(VoxelIn){}
 };
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDonNavigationDynamicCollisionDelegate, const FDonNavigationDynamicCollisionPayload&, Data); // note: non-dynamic delegate can't be used as a function parameter apparently
@@ -129,7 +129,7 @@ struct FDonNavigationDynamicCollisionNotifyee
 
 	FDonNavigationDynamicCollisionNotifyee(){}
 
-	FDonNavigationDynamicCollisionNotifyee(FDonNavigationDynamicCollisionDelegate Listener, FDonNavigationDynamicCollisionPayload Payload) : Listener(Listener), Payload(Payload)
+	FDonNavigationDynamicCollisionNotifyee(FDonNavigationDynamicCollisionDelegate ListenerIn, FDonNavigationDynamicCollisionPayload PayloadIn) : Listener(ListenerIn), Payload(PayloadIn)
 	{
 
 	}
@@ -411,12 +411,13 @@ struct FDoNNavigationQueryData
 	
 	FDoNNavigationQueryData(){}
 
-	FDoNNavigationQueryData(AActor* Actor, UPrimitiveComponent* CollisionComponent, FVector Origin, FVector Destination, const FDoNNavigationQueryParams& QueryParams,
-		                    const FDoNNavigationDebugParams& DebugParams,  FDonNavigationVoxel* OriginVolume, FDonNavigationVoxel* DestinationVolume, 
-							FVector OriginVolumeCenter, FVector DestinationVolumeCenter, FDonVoxelCollisionProfile VoxelCollisionProfile)
-		                  : Actor(Actor), CollisionComponent(CollisionComponent), Origin(Origin), Destination(Destination), QueryParams(QueryParams), DebugParams(DebugParams), 
-		                    OriginVolume(OriginVolume), DestinationVolume(DestinationVolume), 
-		                    OriginVolumeCenter(OriginVolumeCenter), DestinationVolumeCenter(DestinationVolumeCenter), VoxelCollisionProfile(VoxelCollisionProfile){}
+	FDoNNavigationQueryData(AActor* ActorIn, UPrimitiveComponent* CollisionComponentIn, FVector OriginIn, FVector DestinationIn, const FDoNNavigationQueryParams& QueryParamsIn,
+		                    const FDoNNavigationDebugParams& DebugParamsIn,  FDonNavigationVoxel* OriginVolumeIn, FDonNavigationVoxel* DestinationVolumeIn, 
+							FVector OriginVolumeCenterIn, FVector DestinationVolumeCenterIn, FDonVoxelCollisionProfile VoxelCollisionProfileIn)
+		                  : Actor(ActorIn), CollisionComponent(CollisionComponentIn), Origin(OriginIn), Destination(DestinationIn), QueryParams(QueryParamsIn), DebugParams(DebugParamsIn), 
+							OriginVolumeCenter(OriginVolumeCenterIn), DestinationVolumeCenter(DestinationVolumeCenterIn), VoxelCollisionProfile(VoxelCollisionProfileIn),
+							OriginVolume(OriginVolumeIn), DestinationVolume(DestinationVolumeIn)
+							{}
 
 	FORCEINLINE FString GetActorName() { return Actor.IsValid() ? Actor->GetName() : FString();	}
 
@@ -474,8 +475,8 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 
 	FDonNavigationQueryTask() {}
 
-	FDonNavigationQueryTask( FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandler, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifier)
-						   : Data(InData), ResultHandler(ResultHandler), DynamicCollisionListener(DynamicCollisionNotifier)
+	FDonNavigationQueryTask( FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandlerIn, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifierIn)
+						   : Data(InData), ResultHandler(ResultHandlerIn), DynamicCollisionListener(DynamicCollisionNotifierIn)
 	{	
 		if (!InData.OriginVolume) // Unbound
 		{
@@ -526,25 +527,25 @@ struct FDonMeshIdentifier
 
 	FDonMeshIdentifier(){}
 
-	explicit FDonMeshIdentifier(UPrimitiveComponent* Mesh, FName CustomCacheIdentifier = FName()) : Mesh(Mesh), CustomCacheIdentifier(CustomCacheIdentifier)
+	explicit FDonMeshIdentifier(UPrimitiveComponent* MeshIn, FName CustomCacheIdentifierIn = FName()) : Mesh(MeshIn), CustomCacheIdentifier(CustomCacheIdentifierIn)
 	{
-		UniqueTag = CustomCacheIdentifier.IsNone() ? GetUniqueMeshTag(Mesh) : CustomCacheIdentifier;
+		UniqueTag = CustomCacheIdentifier.IsNone() ? GetUniqueMeshTag(MeshIn) : CustomCacheIdentifier;
 
-		if (CustomCacheIdentifier.IsNone() && Mesh)
-			HashValue = GetTypeHash(Mesh);
+		if (CustomCacheIdentifier.IsNone() && MeshIn)
+			HashValue = GetTypeHash(MeshIn);
 		else
 			HashValue = GetTypeHash(CustomCacheIdentifier);
 	}
 
 private:
 
-	FName GetUniqueMeshTag(UPrimitiveComponent* Mesh)
+	FName GetUniqueMeshTag(UPrimitiveComponent* InMesh)
 	{	
-		FString meshName = Mesh->GetName();		
-		FString ownerName = Mesh->GetOwner()->GetName();
+		FString meshName = InMesh->GetName();		
+		FString ownerName = InMesh->GetOwner()->GetName();
 		FString delimiter = FString("-");
 		
-		if (Mesh)
+		if (InMesh)
 			return FName(*meshName.Append(delimiter).Append(ownerName));
 		else
 			return NAME_None;
@@ -611,8 +612,8 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 
 	FDonNavigationDynamicCollisionTask(){}
 
-	FDonNavigationDynamicCollisionTask(FDonMeshIdentifier MeshId, FDonCollisionSamplerCallback ResultHandler, FDonNavigationVoxel MeshOriginalVolume, bool bDisableCacheUsage, bool bReloadCollisionCache, bool bUseCheapBoundsCollision, float BoundsScaleFactor, bool bDrawDebug)
-		: MeshId(MeshId), ResultHandler(ResultHandler), MeshOriginalVolume(MeshOriginalVolume), bDisableCacheUsage(bDisableCacheUsage), bReloadCollisionCache(bReloadCollisionCache), bUseCheapBoundsCollision(bUseCheapBoundsCollision), BoundsScaleFactor(BoundsScaleFactor), bDrawDebug(bDrawDebug)
+	FDonNavigationDynamicCollisionTask(FDonMeshIdentifier MeshIdIn, FDonCollisionSamplerCallback ResultHandlerIn, FDonNavigationVoxel MeshOriginalVolumeIn, bool bDisableCacheUsageIn, bool bReloadCollisionCacheIn, bool bUseCheapBoundsCollisionIn, float BoundsScaleFactorIn, bool bDrawDebugIn)
+		: MeshId(MeshIdIn), ResultHandler(ResultHandlerIn), MeshOriginalVolume(MeshOriginalVolumeIn), bReloadCollisionCache(bReloadCollisionCacheIn), bDisableCacheUsage(bDisableCacheUsageIn), bUseCheapBoundsCollision(bUseCheapBoundsCollisionIn), BoundsScaleFactor(BoundsScaleFactorIn), bDrawDebug(bDrawDebugIn)
 	{
 		i = j = k = 0;
 

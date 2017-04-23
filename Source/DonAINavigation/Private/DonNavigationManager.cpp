@@ -1574,7 +1574,7 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVolume(FVector &DesiredLocati
 	// Volume resolution for Finite Worlds
 
 	if (bShouldSweep && !CollisionComponent)
-		return false;
+		return nullptr;
 
 	bool bInitialPositionCollides;
 	auto volume = GetClosestNavigableVolume(DesiredLocation, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);	
