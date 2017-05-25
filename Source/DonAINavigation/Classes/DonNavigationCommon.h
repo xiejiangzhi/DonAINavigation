@@ -20,14 +20,10 @@
 
 #if PLATFORM_WINDOWS
 #include "AllowWindowsPlatformTypes.h"
-<<<<<<< HEAD
 #elif PLATFORM_XBOXONE
 #include "XboxOneAllowPlatformTypes.h"
 #endif
 
-=======
-#endif
->>>>>>> origin/master
 
 namespace DoNNavigation
 {
@@ -99,10 +95,5 @@ namespace DoNNavigation
 }
 
 #if PLATFORM_WINDOWS
-<<<<<<< HEAD
  #include "HideWindowsPlatformTypes.h"
  #endif
-=======
-#include "HideWindowsPlatformTypes.h"
-#endif
->>>>>>> origin/master
