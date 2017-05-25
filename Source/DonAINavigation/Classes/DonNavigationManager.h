@@ -111,7 +111,11 @@ struct FDonNavigationDynamicCollisionPayload
 
 	FDonNavigationDynamicCollisionPayload(){}
 
+<<<<<<< HEAD
 	FDonNavigationDynamicCollisionPayload(void* CustomDelegatePayloadIn, FDonNavigationVoxel VoxelIn) : CustomDelegatePayload(CustomDelegatePayloadIn), Voxel(VoxelIn) {}
+=======
+	FDonNavigationDynamicCollisionPayload(void* CustomDelegatePayloadIn, FDonNavigationVoxel VoxelIn) : CustomDelegatePayload(CustomDelegatePayloadIn), Voxel(VoxelIn){}
+>>>>>>> origin/master
 };
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDonNavigationDynamicCollisionDelegate, const FDonNavigationDynamicCollisionPayload&, Data); // note: non-dynamic delegate can't be used as a function parameter apparently
@@ -414,12 +418,21 @@ struct FDoNNavigationQueryData
 	FDoNNavigationQueryData(){}
 
 	FDoNNavigationQueryData(AActor* ActorIn, UPrimitiveComponent* CollisionComponentIn, FVector OriginIn, FVector DestinationIn, const FDoNNavigationQueryParams& QueryParamsIn,
+<<<<<<< HEAD
 		const FDoNNavigationDebugParams& DebugParamsIn, FDonNavigationVoxel* OriginVolumeIn, FDonNavigationVoxel* DestinationVolumeIn,
 		FVector OriginVolumeCenterIn, FVector DestinationVolumeCenterIn, FDonVoxelCollisionProfile VoxelCollisionProfileIn)
 		: Actor(ActorIn), CollisionComponent(CollisionComponentIn), Origin(OriginIn), Destination(DestinationIn), QueryParams(QueryParamsIn), DebugParams(DebugParamsIn),
 		OriginVolumeCenter(OriginVolumeCenterIn), DestinationVolumeCenter(DestinationVolumeCenterIn), VoxelCollisionProfile(VoxelCollisionProfileIn),
 		OriginVolume(OriginVolumeIn), DestinationVolume(DestinationVolumeIn)
 	{}
+=======
+		                    const FDoNNavigationDebugParams& DebugParamsIn,  FDonNavigationVoxel* OriginVolumeIn, FDonNavigationVoxel* DestinationVolumeIn, 
+							FVector OriginVolumeCenterIn, FVector DestinationVolumeCenterIn, FDonVoxelCollisionProfile VoxelCollisionProfileIn)
+		                  : Actor(ActorIn), CollisionComponent(CollisionComponentIn), Origin(OriginIn), Destination(DestinationIn), QueryParams(QueryParamsIn), DebugParams(DebugParamsIn), 
+							OriginVolumeCenter(OriginVolumeCenterIn), DestinationVolumeCenter(DestinationVolumeCenterIn), VoxelCollisionProfile(VoxelCollisionProfileIn),
+							OriginVolume(OriginVolumeIn), DestinationVolume(DestinationVolumeIn)
+							{}
+>>>>>>> origin/master
 
 	FORCEINLINE FString GetActorName() { return Actor.IsValid() ? Actor->GetName() : FString();	}
 
@@ -477,9 +490,15 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 
 	FDonNavigationQueryTask() {}
 
+<<<<<<< HEAD
 	FDonNavigationQueryTask(FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandlerIn, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifierIn)
 		: Data(InData), ResultHandler(ResultHandlerIn), DynamicCollisionListener(DynamicCollisionNotifierIn)
 	{
+=======
+	FDonNavigationQueryTask( FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandlerIn, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifierIn)
+						   : Data(InData), ResultHandler(ResultHandlerIn), DynamicCollisionListener(DynamicCollisionNotifierIn)
+	{	
+>>>>>>> origin/master
 		if (!InData.OriginVolume) // Unbound
 		{
 			Data.Frontier_Unbound.put(InData.OriginVolumeCenter, 0);
