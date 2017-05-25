@@ -1574,7 +1574,7 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVolume(FVector &DesiredLocati
 	// Volume resolution for Finite Worlds
 
 	if (bShouldSweep && !CollisionComponent)
-		return false;
+		return nullptr;
 
 	bool bInitialPositionCollides;
 	auto volume = GetClosestNavigableVolume(DesiredLocation, CollisionComponent, bInitialPositionCollides, CollisionShapeInflation, bShouldSweep);	
@@ -1587,7 +1587,7 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVolume(FVector &DesiredLocati
 
 	if (bFlexibleOriginGoal) // we could filter this adaptation to only consider bInitialPositionCollides scenarios, but there are some edge cases which aren't covered with that approach
 	{
-		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Pawn's initial/final position overlaps an obstacle. Attempting to find substitute vector (a nearby free spot) for pathfinding..."));
 
 		static const int32 numTweaks = 6;
 		static const FVector locationTweaks[numTweaks] = { FVector(0, 0,  1), FVector(1, 0, 0), FVector(0,  1, 0), FVector(0, 0, -1), FVector(-1, 0, 0), FVector(0, -1, 0) };
@@ -1710,7 +1710,7 @@ bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &Res
 	// Failure handling:
 	if (bFlexibleOriginGoal)
 	{
-		UE_LOG(DoNNavigationLog, Error, TEXT("Pawn's initial position overlaps an obstacle. Pathfinding will not work from here, pawn needs to move to a nearby free spot first."));
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Pawn's initial/final position overlaps an obstacle. Attempting to find substitute vector (a nearby free spot) for pathfinding..."));
 
 		for (auto tweakMagnitude : AutoCorrectionGuessList)
 		{

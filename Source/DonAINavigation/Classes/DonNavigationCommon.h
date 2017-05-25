@@ -17,7 +17,13 @@
 #include <functional>
 #include <queue>
 #include <vector>
+
+#if PLATFORM_WINDOWS
 #include "AllowWindowsPlatformTypes.h"
+#elif PLATFORM_XBOXONE
+#include "XboxOneAllowPlatformTypes.h"
+#endif
+
 
 namespace DoNNavigation
 {
@@ -44,7 +50,7 @@ namespace DoNNavigation
 	// Eg: For profiling initial collision sampling on map load, etc
 	static FORCEINLINE uint64 Debug_GetTimeMs64()
 	{
-#ifdef _WIN32
+#if PLATFORM_WINDOWS || PLATFORM_XBOXONE
 		/* Windows */
 		FILETIME ft;
 		LARGE_INTEGER li;
@@ -87,3 +93,7 @@ namespace DoNNavigation
 		timer = Debug_GetTimeMs64() - timer;
 	}
 }
+
+#if PLATFORM_WINDOWS
+ #include "HideWindowsPlatformTypes.h"
+ #endif
