@@ -147,8 +147,10 @@ FBT_FlyToTarget* UBTTask_FlyTo::TaskMemoryFromGenericPayload(void* GenericPayloa
 		return NULL;
 
 	// Is it still working on this task or has it moved on to another one?
-	if (ownerComp->GetActiveNode() != this)
-		return NULL;
+	if (ownerComp->GetTaskStatus(this) != EBTTaskStatus::Active) {
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Task (Fly To) is not active."));
+		return nullptr;
+	}
 
 	// Validations passed, should be safe to work on NodeMemory now:
 
@@ -222,7 +224,10 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 			NavigationManager->StopListeningToDynamicCollisionsForPath(myMemory->DynamicCollisionListener, myMemory->QueryResults);
 
 			// Recalculate path (a dynamic obstacle has probably come out of nowhere and invalidated our current solution)
-			SchedulePathfindingRequest(OwnerComp, NodeMemory);
+			EBTNodeResult::Type bRes = SchedulePathfindingRequest(OwnerComp, NodeMemory);
+			if (bRes == EBTNodeResult::Failed) {
+				FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+			}
 			
 			break;
 		}
