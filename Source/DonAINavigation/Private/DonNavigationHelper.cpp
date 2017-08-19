@@ -29,3 +29,17 @@ ADonNavigationManager* UDonNavigationHelper::DonNavigationManager(UObject* World
 
 	return NULL;
 }
+
+ADonNavigationManager* UDonNavigationHelper::DonNavigationManagerForActor(const AActor *Actor)
+{
+	if (!Actor)
+		return nullptr;
+
+	for (TActorIterator<ADonNavigationManager> It(Actor->GetWorld(), ADonNavigationManager::StaticClass()); It; ++It) {
+		const ADonNavigationManager *Mgr = *It;
+		if (Mgr->IsLocationWithinNavigableWorld(Actor->GetActorLocation()))
+			return *It;
+	}
+
+	return nullptr;
+}

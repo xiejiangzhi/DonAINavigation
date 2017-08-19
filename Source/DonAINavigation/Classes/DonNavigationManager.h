@@ -949,12 +949,12 @@ public:
 	}
 
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
-	bool IsLocationWithinNavigableWorld(FVector DesiredLocation)
+	bool IsLocationWithinNavigableWorld(FVector DesiredLocation) const
 	{
 		if (bIsUnbound)
 			return true;
 
-		FVector origin = GetActorLocation();
+		const FVector origin = GetActorLocation();
 
 		return  DesiredLocation.X >= origin.X && DesiredLocation.X <= (origin.X + XGridSize * VoxelSize) &&
 				DesiredLocation.Y >= origin.Y && DesiredLocation.Y <= (origin.Y + YGridSize * VoxelSize) &&
@@ -1179,10 +1179,13 @@ private:
 	bool ResolveVector(FVector &DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool bFlexibleOriginGoal = true, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
 	bool GetClosestNavigableVector(FVector DesiredLocation, FVector &ResolvedLocation, UPrimitiveComponent* CollisionComponent, bool &bInitialPositionCollides, float CollisionShapeInflation = 0.f, bool bShouldSweep = true);
 
-protected:
-
+public:
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "DoN Navigation")
 	bool CanNavigate(FVector Location);
+
 	bool CanNavigate(FDonNavigationVoxel* Volume);
+
+protected:
 	bool CanNavigateByCollisionProfile(FDonNavigationVoxel* Volume, const FDonVoxelCollisionProfile& CollisionToTest);
 	bool CanNavigateByCollisionProfile(FVector Location, const FDonVoxelCollisionProfile& CollisionToTest);
 
