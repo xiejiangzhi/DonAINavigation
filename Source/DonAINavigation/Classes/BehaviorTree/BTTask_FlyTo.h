@@ -59,6 +59,12 @@ struct FBT_FlyToTarget
 
 	bool bIsANavigator = false;
 
+	FVector TargetLocation;
+
+	FDelegateHandle BBObserverDelegateHandle;
+
+	uint32 bTargetLocationChanged : 1;
+
 	void Reset()
 	{	
 		solutionTraversalIndex = 0;
@@ -66,6 +72,7 @@ struct FBT_FlyToTarget
 		QueryParams = FDoNNavigationQueryParams();
 		Metadata = FBT_FlyToTarget_Metadata();
 		bSolutionInvalidatedByDynamicObstacle = false;
+		bTargetLocationChanged = false;
 	}
 };
 
@@ -77,7 +84,7 @@ class UBTTask_FlyTo : public UBTTaskNode
 {
 	GENERATED_BODY()
 
-	public:
+public:
 	UBTTask_FlyTo(const FObjectInitializer& ObjectInitializer);	
 	
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
@@ -88,6 +95,7 @@ class UBTTask_FlyTo : public UBTTaskNode
 	virtual void InitializeFromAsset(UBehaviorTree& Asset) override;
 
 	void HandleTaskFailure(UBlackboardComponent* blackboard);
+	EBlackboardNotificationResult OnBlackboardValueChange(const UBlackboardComponent& Blackboard, FBlackboard::FKey ChangedKeyID);
 
 #if WITH_EDITOR
 	virtual FName GetNodeIconName() const override;
@@ -96,6 +104,14 @@ class UBTTask_FlyTo : public UBTTaskNode
 	// Behavior Tree Input:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
 	FBlackboardKeySelector FlightLocationKey;
+
+	/** Recalculate path enable */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation", meta = (InlineEditConditionToggle))
+	uint32 bRecalcPathOnDestinationChanged : 1;
+
+	/** Recalculate path if FlightLocation value changed. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DoN Navigation", meta = (EditCondition = "bRecalcPathOnDestinationChanged"))
+	float RecalculatePathTolerance;
 
 	/* Optional: Useful in somecases where you want failure or success of a task to automatically update a particular blackboard key*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
@@ -135,4 +151,7 @@ protected:
 	void AbortPathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);
 
 	void TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_FlyToTarget* MyMemory, float DeltaSeconds);
+
+	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
+
 };

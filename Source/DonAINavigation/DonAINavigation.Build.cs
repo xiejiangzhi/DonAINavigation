@@ -4,7 +4,7 @@ namespace UnrealBuildTool.Rules
 {
 	public class DonAINavigation : ModuleRules
 	{
-		public DonAINavigation(TargetInfo Target)
+		public DonAINavigation(ReadOnlyTargetRules Target) : base(Target)
 		{
             bEnableShadowVariableWarnings = false;
 

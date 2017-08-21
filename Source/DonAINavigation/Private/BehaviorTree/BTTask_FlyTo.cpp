@@ -23,8 +23,12 @@
 #include "BehaviorTree/BTFunctionLibrary.h"
 
 #include "Runtime/AIModule/Classes/AIController.h"
+#include "VisualLogger/VisualLogger.h"
 
-UBTTask_FlyTo::UBTTask_FlyTo(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+UBTTask_FlyTo::UBTTask_FlyTo(const FObjectInitializer& ObjectInitializer) 
+	: Super(ObjectInitializer)
+	, bRecalcPathOnDestinationChanged(false)
+	, RecalculatePathTolerance(50.f)
 {
 	NodeName = "Fly To";
 	bNotifyTick = true;
@@ -50,18 +54,29 @@ void UBTTask_FlyTo::InitializeFromAsset(UBehaviorTree& Asset)
 }
 
 EBTNodeResult::Type UBTTask_FlyTo::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
-{	
-	return SchedulePathfindingRequest(OwnerComp, NodeMemory);
+{
+	EBTNodeResult::Type NodeResult = SchedulePathfindingRequest(OwnerComp, NodeMemory);
+	if (bRecalcPathOnDestinationChanged && (NodeResult == EBTNodeResult::InProgress)) {
+		UBlackboardComponent* BlackboardComp = OwnerComp.GetBlackboardComponent();
+		auto myMemory = (FBT_FlyToTarget*)NodeMemory;
+		if (ensure(BlackboardComp)) {
+			if (myMemory->BBObserverDelegateHandle.IsValid()) {
+				UE_VLOG(OwnerComp.GetAIOwner(), LogBehaviorTree, Warning, TEXT("UBTTask_MoveTo::ExecuteTask \'%s\' Old BBObserverDelegateHandle is still valid! Removing old Observer."), *GetNodeName());
+				BlackboardComp->UnregisterObserver(FlightLocationKey.GetSelectedKeyID(), myMemory->BBObserverDelegateHandle);
+			}
+			myMemory->BBObserverDelegateHandle = BlackboardComp->RegisterObserver(FlightLocationKey.GetSelectedKeyID(), this, FOnBlackboardChangeNotification::CreateUObject(this, &UBTTask_FlyTo::OnBlackboardValueChange));
+		}
+	}
+	return NodeResult;
 }
 
 EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
-	if(!NavigationManager)
-		NavigationManager =  UDonNavigationHelper::DonNavigationManager(this);
-
 	auto pawn        =  OwnerComp.GetAIOwner()->GetPawn();
 	auto myMemory    =  (FBT_FlyToTarget*)NodeMemory;
 	auto blackboard  =  pawn ? pawn->GetController()->FindComponentByClass<UBlackboardComponent>() : NULL;
+
+	NavigationManager =  UDonNavigationHelper::DonNavigationManagerForActor(pawn);
 	
 	// Validate internal state:
 	if (!pawn || !myMemory || !blackboard || !NavigationManager)
@@ -92,6 +107,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	myMemory->bIsANavigator = pawn->GetClass()->ImplementsInterface(UDonNavigator::StaticClass());
 
 	FVector flightDestination = blackboard->GetValueAsVector(FlightLocationKey.SelectedKeyName);
+	myMemory->TargetLocation = flightDestination;
 
 	// Bind result notification delegate:
 	FDoNNavigationResultHandler resultHandler;
@@ -147,8 +163,10 @@ FBT_FlyToTarget* UBTTask_FlyTo::TaskMemoryFromGenericPayload(void* GenericPayloa
 		return NULL;
 
 	// Is it still working on this task or has it moved on to another one?
-	if (ownerComp->GetActiveNode() != this)
-		return NULL;
+	if (ownerComp->GetTaskStatus(this) != EBTTaskStatus::Active) {
+		UE_LOG(DoNNavigationLog, Warning, TEXT("Task (Fly To) is not active."));
+		return nullptr;
+	}
 
 	// Validations passed, should be safe to work on NodeMemory now:
 
@@ -222,8 +240,19 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 			NavigationManager->StopListeningToDynamicCollisionsForPath(myMemory->DynamicCollisionListener, myMemory->QueryResults);
 
 			// Recalculate path (a dynamic obstacle has probably come out of nowhere and invalidated our current solution)
-			SchedulePathfindingRequest(OwnerComp, NodeMemory);
+			EBTNodeResult::Type bRes = SchedulePathfindingRequest(OwnerComp, NodeMemory);
+			if (bRes == EBTNodeResult::Failed) {
+				FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+			}
 			
+			break;
+		}
+
+		if (myMemory->bTargetLocationChanged) {
+			EBTNodeResult::Type bRes = SchedulePathfindingRequest(OwnerComp, NodeMemory);
+			if (bRes == EBTNodeResult::Failed) {
+				FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+			}
 			break;
 		}
 
@@ -349,6 +378,21 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 	}
 }
 
+
+void UBTTask_FlyTo::OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult)
+{
+	FBT_FlyToTarget* myMemory = (FBT_FlyToTarget*)NodeMemory;
+
+	UBlackboardComponent* BlackboardComp = OwnerComp.GetBlackboardComponent();
+	if (ensure(BlackboardComp) && myMemory->BBObserverDelegateHandle.IsValid()) {
+		BlackboardComp->UnregisterObserver(FlightLocationKey.GetSelectedKeyID(), myMemory->BBObserverDelegateHandle);
+	}
+
+	myMemory->BBObserverDelegateHandle.Reset();
+
+	Super::OnTaskFinished(OwnerComp, NodeMemory, TaskResult);
+}
+
 void UBTTask_FlyTo::HandleTaskFailure(UBlackboardComponent* blackboard)
 {
 	if (blackboard)
@@ -356,6 +400,40 @@ void UBTTask_FlyTo::HandleTaskFailure(UBlackboardComponent* blackboard)
 		blackboard->SetValueAsBool(FlightResultKey.SelectedKeyName, false);
 		blackboard->SetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName, !blackboard->GetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName));
 	}	
+}
+
+
+EBlackboardNotificationResult UBTTask_FlyTo::OnBlackboardValueChange(const UBlackboardComponent& Blackboard, FBlackboard::FKey ChangedKeyID)
+{
+	if (!bRecalcPathOnDestinationChanged)
+		return EBlackboardNotificationResult::RemoveObserver;
+
+	UBehaviorTreeComponent* BehaviorComp = Cast<UBehaviorTreeComponent>(Blackboard.GetBrainComponent());
+	if (BehaviorComp == nullptr)
+		return EBlackboardNotificationResult::RemoveObserver;
+
+	uint8* RawMemory = BehaviorComp->GetNodeMemory(this, BehaviorComp->FindInstanceContainingNode(this));
+	FBT_FlyToTarget* myMemory = reinterpret_cast<FBT_FlyToTarget*>(RawMemory);
+
+	const EBTTaskStatus::Type TaskStatus = BehaviorComp->GetTaskStatus(this);
+	if (TaskStatus != EBTTaskStatus::Active) {
+		UE_VLOG(BehaviorComp, LogBehaviorTree, Error, TEXT("BT MoveTo \'%s\' task observing BB entry while no longer being active!"), *GetNodeName());
+
+		// resetting BBObserverDelegateHandle without unregistering observer since 
+		// returning EBlackboardNotificationResult::RemoveObserver here will take care of that for us
+		myMemory->BBObserverDelegateHandle.Reset();
+
+		return EBlackboardNotificationResult::RemoveObserver;
+	}
+
+	if (myMemory != nullptr) {
+		const FVector flightDestination = Blackboard.GetValueAsVector(FlightLocationKey.SelectedKeyName);
+		if (!myMemory->TargetLocation.Equals(flightDestination, RecalculatePathTolerance)) {
+			myMemory->bTargetLocationChanged = true;
+		}
+	}
+
+	return EBlackboardNotificationResult::ContinueObserving;
 }
 
 EBTNodeResult::Type UBTTask_FlyTo::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)

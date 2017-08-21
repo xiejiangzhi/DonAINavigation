@@ -32,4 +32,8 @@ class DONAINAVIGATION_API UDonNavigationHelper : public UBlueprintFunctionLibrar
 	/* Returns the Voxel navigation builder used for building navigation volumes and performing pathfinding */
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation", meta = (WorldContext = "WorldContextObject"))
 	static ADonNavigationManager* DonNavigationManager(UObject* WorldContextObject);
+
+	/* Returns the Voxel navigation builder used for building navigation volumes and performing pathfinding for specified Actor*/
+	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
+	static ADonNavigationManager* DonNavigationManagerForActor(const AActor *Actor);
 };
