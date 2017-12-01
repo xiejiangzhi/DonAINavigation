@@ -32,18 +32,18 @@ class DONAINAVIGATION_API IDonNavigator
 	// but this has since been sidelined to make it easier for new consumers of the system to rapidly get going.
 
 	/* Optional custom movement input. If not provided, default AddMovementInput behavior will be called on the pawn or character*/
-	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void AddMovementInputCustom(FVector WorldDirection, float ScaleValue);	
 
-	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void OnLocomotionBegin();
 
-	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void OnLocomotionEnd();
 
-	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void OnLocomotionAbort();
 
-	UFUNCTION(BlueprintNativeEvent, Category = "Don Navigation")
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void OnNextSegment(FVector NextPoint);	
 };

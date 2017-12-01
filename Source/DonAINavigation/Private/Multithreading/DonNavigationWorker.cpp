@@ -12,9 +12,9 @@
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+#include "Multithreading/DonNavigationWorker.h"
 #include "../DonAINavigationPrivatePCH.h"
 
-#include "Multithreading/DonNavigationWorker.h"
 #include "DonNavigationManager.h"
 
 FDonNavigationWorker::FDonNavigationWorker()
@@ -60,7 +60,11 @@ uint32 FDonNavigationWorker::Run()
 	FPlatformProcess::Sleep(0.03f);
 
 	while (StopTaskCounter.GetValue() == 0)
-	{	
+	{
+		Manager->ReceiveAsyncNavigationTasks();
+		Manager->ReceiveAsyncAbortRequests();
+		Manager->ReceiveAsyncCollisionTasks();
+
 		SolveNavigationTasks();
 
 		//FPlatformProcess::Sleep(0.2f);

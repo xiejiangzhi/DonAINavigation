@@ -12,9 +12,8 @@
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
 // WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#include "DonAINavigationPrivatePCH.h"
-
 #include "DonNavigationManager.h"
+#include "DonAINavigationPrivatePCH.h"
 #include "Multithreading/DonNavigationWorker.h"
 
 #include <stdio.h>
@@ -148,6 +147,9 @@ void ADonNavigationManager::ReceiveAsyncResults()
 		FDonNavigationQueryTask task;
 		CompletedNavigationTasks.Dequeue(task);
 		task.BroadcastResult();
+
+		ActiveNavigationTaskOwners.Remove(task.Data.Actor.Get());
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Orange, FString("[game thread] Received new nav result!"));
 	}
 
 	while (!CompletedCollisionTasks.IsEmpty())
@@ -155,7 +157,10 @@ void ADonNavigationManager::ReceiveAsyncResults()
 		FDonNavigationDynamicCollisionTask task;
 		CompletedCollisionTasks.Dequeue(task);
 		task.BroadcastResult();
-	}	
+
+		ActiveCollisionTaskOwners.Remove(task.MeshId.Mesh.Get());
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Orange, FString("[game thread] Completed new dynamic collision task!"));
+	}
 }
 
 void ADonNavigationManager::ReceiveAsyncDynamicCollisionUpdates()
@@ -232,9 +237,23 @@ void ADonNavigationManager::BeginPlay()
 
 	ActiveDynamicCollisionTasks.Reserve(60);
 
+	RefreshPerformanceSettings();
+
 	// Spawn dedicated worker thread:
 	if (bMultiThreadingEnabled)
 		WorkerThread = new FDonNavigationWorker(this, MaxPathSolverIterationsOnThread, MaxCollisionSolverIterationsOnThread);
+}
+
+void ADonNavigationManager::RefreshPerformanceSettings()
+{
+	if (bIsUnbound)
+	{
+		// Transfer Infinite World performance settings:
+		MaxPathSolverIterationsPerTick = MaxPathSolverIterationsPerTick_Unbound;
+		MaxCollisionSolverIterationsPerTick = MaxCollisionSolverIterationsPerTick_Unbound;
+		MaxPathSolverIterationsOnThread = MaxPathSolverIterationsOnThread_Unbound;
+		MaxCollisionSolverIterationsOnThread = MaxCollisionSolverIterationsOnThread_Unbound;
+	}
 }
 
 void ADonNavigationManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -547,14 +566,14 @@ FString ADonNavigationManager::GetMeshLogIdentifier(UPrimitiveComponent* Mesh)
 	return meshLog;
 }
 
-FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy /*= false*/, bool bDisableCacheUsage /*= false*/, FName CustomCacheIdentifier /*= NAME_None*/, bool bReloadCollisionCache /*= false*/, bool bUseCheapBoundsCollision /*= false*/, float BoundsScaleFactor /*= 1.f*/, bool DrawDebug /*= false*/)
+FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, DonVoxelProfileCache& PreferredCache, bool bIgnoreMeshOriginOccupancy /*= false*/, bool bDisableCacheUsage /*= false*/, FName CustomCacheIdentifier /*= NAME_None*/, bool bReloadCollisionCache /*= false*/, bool bUseCheapBoundsCollision /*= false*/, float BoundsScaleFactor /*= 1.f*/, bool DrawDebug /*= false*/)
 {
 	// Does the collision cache have an entry for this mesh?	
-	if (!bDisableCacheUsage && !bReloadCollisionCache && VoxelCollisionProfileCache.Contains(MeshId))
+	if (!bDisableCacheUsage && !bReloadCollisionCache && PreferredCache.Contains(MeshId))
 	{
 		bResultIsValid = true;
 
-		return *VoxelCollisionProfileCache.Find(MeshId);
+		return *PreferredCache.Find(MeshId);
 	}
 	else
 	{	
@@ -563,7 +582,7 @@ FDonVoxelCollisionProfile ADonNavigationManager::GetVoxelCollisionProfileFromMes
 		// Add to cache:
 		if (bResultIsValid && !bDisableCacheUsage)
 		{
-			VoxelCollisionProfileCache.Add(MeshId, collisionData);
+			PreferredCache.Add(MeshId, collisionData);
 		}
 
 		return collisionData;
@@ -687,6 +706,7 @@ FDonVoxelCollisionProfile ADonNavigationManager::SampleVoxelCollisionForMesh(UPr
 
 }
 
+// @wishlist: group this giant list of optional arguments into a nice struct...
 bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* Mesh, FDonCollisionSamplerCallback ResultHandler, FName CustomCacheIdentifier /*= NAME_None*/, bool bReplaceExistingTask /*= false*/, bool bDisableCacheUsage /*= false*/, bool bReloadCollisionCache /*= false*/, bool bUseCheapBoundsCollision /*= false*/, float BoundsScaleFactor /*= 1.f*/, bool bForceSynchronousExecution /*= false*/, bool bDrawDebug /*= false*/)
 {
 	// Input validations
@@ -717,14 +737,13 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 		return false;
 	}
 
-	const bool bIgnoreMeshOriginOccupancy = false;
-
 	if (bForceSynchronousExecution)
 	{
 		UE_LOG(DoNNavigationLog, Verbose, TEXT("Forced synchronous execution of dynamic collision updates for %s (%s) in progress..."), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());		
 		
 		bool bResultIsValid = false;
-		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(meshId, bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, bDrawDebug);
+		const bool bIgnoreMeshOriginOccupancy = false;
+		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(meshId, bResultIsValid, VoxelCollisionProfileCache_GameThread, bIgnoreMeshOriginOccupancy, bDisableCacheUsage, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, bDrawDebug);
 
 		if (!bResultIsValid)
 		{
@@ -740,62 +759,12 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 		return true;
 	}
 
-	// Does the collision cache have an entry for this mesh?
-	if (!bDisableCacheUsage && !bReloadCollisionCache && VoxelCollisionProfileCache.Contains(meshId))
-	{
-		task.FetchSuccess();
-
-		task.CollisionData = *VoxelCollisionProfileCache.Find(meshId);
-
+	bool bOverallStatus;
+	const bool bNeedsToScheduleTask = PrepareDynamicCollisionTask(task, bOverallStatus);
+	if(bNeedsToScheduleTask)
 		AddDynamicCollisionTask(task);
-	}
-	// Are we using cheap bounds collision?
-	else if (bUseCheapBoundsCollision)
-	{	
-		bool bResultIsValid = false;
-		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(meshId, bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage, task.MeshId.CustomCacheIdentifier, task.bReloadCollisionCache, task.bUseCheapBoundsCollision, task.BoundsScaleFactor, bDrawDebug);
 
-		if (!bResultIsValid)
-		{
-			UE_LOG(DoNNavigationLog, Log, TEXT("Cheap bounds voxel update for Mesh %s (%s) failed, voxel collisions could not be sampled. "), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
-
-			return false;
-		}
-
-		DynamicCollisionUpdateForMesh(task.MeshId, VoxelCollisionProfile, task.bDisableCacheUsage, task.bDrawDebug);
-
-		UE_LOG(DoNNavigationLog, Verbose, TEXT("Dynamic collision updates using cheap bounds collision complete for mesh: %s (%s)"), *GetMeshLogIdentifier(Mesh), *CustomCacheIdentifier.ToString());
-
-		task.ResultHandler.ExecuteIfBound(true);
-
-		return true; // we don't need to schedule a task (synchronous sampler was used)
-	}
-	// Prepare task data:
-	else
-	{
-		// Add bounds data to the task	
-		FVector meshExtents = Mesh->Bounds.BoxExtent * BoundsScaleFactor;		
-		task.MeshOriginalExtents = meshExtents;
-		task.xLength = meshExtents.X * 2 / VoxelSize + 1;
-		task.yLength = meshExtents.Y * 2 / VoxelSize + 1;
-		task.zLength = meshExtents.Z * 2 / VoxelSize + 1;
-
-		// Store collision params		
-		task.ObjectParams.AddObjectTypesToQuery(Mesh->GetCollisionObjectType());
-
-		const bool bTraceComplex = false;
-		task.CollisionParams = FCollisionQueryParams(FName("GenerateNavigationVolumePixels", bTraceComplex));
-		task.CollisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
-
-		// Store the asset name (useful for debugging)		
-		task.MeshAssetName = GetMeshAssetName(Mesh);
-		
-		// Reserve a resonable amount of space for the TArray sampler results:
-		task.CollisionData.RelativeVoxelOccupancy.Reserve((task.xLength) * (task.yLength) * (task.zLength) / 4);
-
-		// Finally, add the task
-		AddDynamicCollisionTask(task);
-	}
+	return bOverallStatus;	
 
 	UE_LOG(DoNNavigationLog, Verbose, TEXT("Num collision tasks: %d"), ActiveDynamicCollisionTasks.Num());
 
@@ -803,7 +772,7 @@ bool ADonNavigationManager::ScheduleDynamicCollisionUpdate(UPrimitiveComponent* 
 
 }
 
-bool ADonNavigationManager::IsDynamicCollisionTaskActive(FDonNavigationDynamicCollisionTask& Task)
+bool ADonNavigationManager::IsDynamicCollisionTaskActive(const FDonNavigationDynamicCollisionTask& Task)
 {
 	if (!bMultiThreadingEnabled)
 	{
@@ -811,9 +780,78 @@ bool ADonNavigationManager::IsDynamicCollisionTaskActive(FDonNavigationDynamicCo
 	}
 	else
 	{
-		FScopeLock Lock(&CriticalSection_Collisions);
+		//FScopeLock Lock(&CriticalSection_Collisions); return ActiveDynamicCollisionTasks.Contains(Task);
 
-		return ActiveDynamicCollisionTasks.Contains(Task);
+		return ActiveCollisionTaskOwners.Contains(Task.MeshId.Mesh.Get());
+	}
+}
+
+bool ADonNavigationManager::PrepareDynamicCollisionTask(FDonNavigationDynamicCollisionTask& Task, bool &bOverallStatus)
+{
+	auto mesh = Task.MeshId.Mesh.Get();
+	if (!ensure(mesh))
+	{
+		bOverallStatus = false;
+		return false;
+	}
+
+	if (!Task.bDisableCacheUsage && !Task.bReloadCollisionCache && VoxelCollisionProfileCache_WorkerThread.Contains(Task.MeshId))
+	{
+		Task.FetchSuccess();
+
+		Task.CollisionData = *VoxelCollisionProfileCache_WorkerThread.Find(Task.MeshId);
+
+		bOverallStatus = true;
+		return true;
+	}
+	// Are we using cheap bounds collision?
+	else if (Task.bUseCheapBoundsCollision)
+	{
+		bool bResultIsValid = false;
+		const bool bIgnoreMeshOriginOccupancy = false;
+		FDonVoxelCollisionProfile VoxelCollisionProfile = GetVoxelCollisionProfileFromMesh(Task.MeshId, bResultIsValid, VoxelCollisionProfileCache_WorkerThread, bIgnoreMeshOriginOccupancy, Task.bDisableCacheUsage, Task.MeshId.CustomCacheIdentifier, Task.bReloadCollisionCache, Task.bUseCheapBoundsCollision, Task.BoundsScaleFactor, Task.bDrawDebug);
+
+		if (!bResultIsValid)
+		{
+			UE_LOG(DoNNavigationLog, Log, TEXT("Cheap bounds voxel update for Mesh %s (%s) failed, voxel collisions could not be sampled. "), *GetMeshLogIdentifier(mesh), *Task.MeshId.CustomCacheIdentifier.ToString());
+			bOverallStatus = false;
+			return false;
+		}
+
+		DynamicCollisionUpdateForMesh(Task.MeshId, VoxelCollisionProfile, Task.bDisableCacheUsage, Task.bDrawDebug);
+
+		UE_LOG(DoNNavigationLog, Verbose, TEXT("Dynamic collision updates using cheap bounds collision complete for mesh: %s (%s)"), *GetMeshLogIdentifier(mesh), *Task.MeshId.CustomCacheIdentifier.ToString());
+
+		Task.ResultHandler.ExecuteIfBound(true);
+
+		bOverallStatus = true;
+		return false; // we don't need to schedule a task (it was already solved above)
+	}
+	// Prepare task data:
+	else
+	{
+		// Add bounds data to the task	
+		FVector meshExtents = mesh->Bounds.BoxExtent * Task.BoundsScaleFactor;
+		Task.MeshOriginalExtents = meshExtents;
+		Task.xLength = meshExtents.X * 2 / VoxelSize + 1;
+		Task.yLength = meshExtents.Y * 2 / VoxelSize + 1;
+		Task.zLength = meshExtents.Z * 2 / VoxelSize + 1;
+
+		// Store collision params		
+		Task.ObjectParams.AddObjectTypesToQuery(mesh->GetCollisionObjectType());
+
+		const bool bTraceComplex = false;
+		Task.CollisionParams = FCollisionQueryParams(FName("GenerateNavigationVolumePixels", bTraceComplex));
+		Task.CollisionParams.AddIgnoredActors(ActorsToIgnoreForCollision);
+
+		// Store the asset name (useful for debugging)		
+		Task.MeshAssetName = GetMeshAssetName(mesh);
+
+		// Reserve a resonable amount of space for the TArray sampler results:
+		Task.CollisionData.RelativeVoxelOccupancy.Reserve((Task.xLength) * (Task.yLength) * (Task.zLength) / 4);
+
+		bOverallStatus = true;
+		return true;
 	}
 }
 
@@ -825,11 +863,34 @@ void ADonNavigationManager::AddDynamicCollisionTask(FDonNavigationDynamicCollisi
 	}
 	else
 	{
-		FScopeLock Lock(&CriticalSection_Collisions);
+		//FScopeLock Lock(&CriticalSection_Collisions);	ActiveDynamicCollisionTasks.Add(Task);
+		NewDynamicCollisionTasks.Enqueue(Task);
+		ActiveCollisionTaskOwners.Add(Task.MeshId.Mesh.Get());
 
-		ActiveDynamicCollisionTasks.Add(Task);
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new collision task"));
 	}
 }
+
+void ADonNavigationManager::ReceiveAsyncCollisionTasks()
+{
+	if (NewDynamicCollisionTasks.IsEmpty())
+		return;
+
+	FDonNavigationDynamicCollisionTask task;
+	bool bHasNewTask = NewDynamicCollisionTasks.Dequeue(task);
+
+	///////////////	
+	if (bHasNewTask)
+	{
+		bool bOverallStatus;
+		const bool bNeedsToScheduleTask = PrepareDynamicCollisionTask(task, bOverallStatus);
+		if(bNeedsToScheduleTask)
+			ActiveDynamicCollisionTasks.Add(task);
+
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new collision task"));
+	}
+}
+
 
 void ADonNavigationManager::TickVoxelCollisionSampler(FDonNavigationDynamicCollisionTask& Task)
 {
@@ -890,7 +951,7 @@ void ADonNavigationManager::TickVoxelCollisionSampler(FDonNavigationDynamicColli
 		Task.FetchSuccess();
 
 		if(!Task.bDisableCacheUsage)
-			VoxelCollisionProfileCache.Add(Task.MeshId, Task.CollisionData);	
+			VoxelCollisionProfileCache_WorkerThread.Add(Task.MeshId, Task.CollisionData);	
 
 		if (Task.bDrawDebug)
 		{
@@ -929,15 +990,16 @@ void ADonNavigationManager::TickScheduledCollisionTasks(float DeltaSeconds, int3
 	
 	int32 tasksProcessed = 0;
 
-	for (auto& task : ActiveDynamicCollisionTasks)
+	for (int32 i=0; i < ActiveDynamicCollisionTasks.Num(); i++)
 	{	
+		auto& task = ActiveDynamicCollisionTasks[i];
 		//SCOPE_CYCLE_COUNTER(STAT_DynamicCollisionSampling);
 
 		if (!task.MeshId.Mesh.IsValid())
 		{
 			UE_LOG(DoNNavigationLog, Error, TEXT("Invalid mesh object found during dynamic collision updates for %s - %s"), *task.MeshAssetName, *task.MeshId.UniqueTag.ToString());			
 
-			CompleteCollisionTask(task, false);
+			CompleteCollisionTask(i, false);
 
 			continue;
 		}
@@ -960,14 +1022,14 @@ void ADonNavigationManager::TickScheduledCollisionTasks(float DeltaSeconds, int3
 
 				UE_LOG(DoNNavigationLog, Verbose, TEXT("Dynamic collision updates complete for mesh: %s (%s) in %f seconds"), *task.MeshAssetName, *task.MeshId.UniqueTag.ToString(), task.TimeTaken);
 				
-				CompleteCollisionTask(task, true);
+				CompleteCollisionTask(i, true);
 			}				
 			else
 			{
 				UE_LOG(DoNNavigationLog, Error, TEXT("Invalid mesh object found during dynamic collision updates for %s - %s"), *task.MeshAssetName, *task.MeshId.UniqueTag.ToString());
 				
-				CompleteCollisionTask(task, false);
-			}			
+				CompleteCollisionTask(i, false);
+			}
 
 			UE_LOG(DoNNavigationLog, Verbose, TEXT("Num collision tasks: %d"), ActiveDynamicCollisionTasks.Num());
 		}		
@@ -981,15 +1043,15 @@ void ADonNavigationManager::TickScheduledCollisionTasks(float DeltaSeconds, int3
 
 void ADonNavigationManager::TickScheduledCollisionTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick)
 {
-	{
-		FScopeLock Lock(&CriticalSection_Collisions);
-		TickScheduledCollisionTasks(DeltaSeconds, MaxIterationsPerTick);
-	}
+	TickScheduledCollisionTasks(DeltaSeconds, MaxIterationsPerTick);
+
+	//{ FScopeLock Lock(&CriticalSection_Collisions);		TickScheduledCollisionTasks(DeltaSeconds, MaxIterationsPerTick);	}
 }
 
-void ADonNavigationManager::CompleteCollisionTask(FDonNavigationDynamicCollisionTask& Task, bool bIsSuccess)
+void ADonNavigationManager::CompleteCollisionTask(const int32 TaskIndex, bool bIsSuccess)
 {
-	Task.bCollisionFetchSuccess = bIsSuccess;
+	auto& task = ActiveDynamicCollisionTasks[TaskIndex];
+	task.bCollisionFetchSuccess = bIsSuccess;
 
 	bool bSynchronousOperation = !bMultiThreadingEnabled;
 
@@ -998,20 +1060,22 @@ void ADonNavigationManager::CompleteCollisionTask(FDonNavigationDynamicCollision
 		// Just like with pathfinding tasks, synchronous execution of the delegate can create dependencies on removal of the task from the task list
 		// so to ensure consistent behavior we first remove the task and only then execute the delegate on a safe copy of the result handler.
 
-		auto resultHandler_safecopy = Task.ResultHandler;
+		auto resultHandler_safecopy = task.ResultHandler;
 
-		ActiveDynamicCollisionTasks.Remove(Task);		
+		ActiveDynamicCollisionTasks.RemoveAtSwap(TaskIndex);
 
 		resultHandler_safecopy.ExecuteIfBound(bIsSuccess);
 		
 	}
 	else
 	{
-		FScopeLock Lock(&CriticalSection_Collisions);
+		//FScopeLock Lock(&CriticalSection_Collisions);
 
-		CompletedCollisionTasks.Enqueue(Task);
+		CompletedCollisionTasks.Enqueue(task);
 
-		ActiveDynamicCollisionTasks.Remove(Task);		
+		ActiveDynamicCollisionTasks.RemoveAtSwap(TaskIndex);
+
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Blue, FString("[async thread] Enqueued new collision task result"));		
 	}
 	
 }
@@ -1048,7 +1112,8 @@ void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifi
 	// Flush out occupancy from previously occupied voxels:
 	for (auto volume : VoxelCollisionProfile.WorldVoxelsOccupied)
 	{
-		volume->SetNavigability(true);
+		if(volume)
+			volume->SetNavigability(true);
 
 		// Draw free'd voxels //if (bDrawDebug) DrawDebugVoxel_Safe(GetWorld(), volume->Location, NavVolumeExtent(), FColor::Green, true, 0, 0, DebugVoxelsLineThickness);
 	}	
@@ -1098,7 +1163,7 @@ void ADonNavigationManager::DynamicCollisionUpdateForMesh(const FDonMeshIdentifi
 
 	// Update the cache with latest occupany data:
 	if(!bDisableCacheUsage)
-		VoxelCollisionProfileCache.Add(MeshId, VoxelCollisionProfile);
+		VoxelCollisionProfileCache_WorkerThread.Add(MeshId, VoxelCollisionProfile);
 }
 
 void ADonNavigationManager::Debug_ToggleWorldBoundaryInGame()
@@ -1174,7 +1239,7 @@ void ADonNavigationManager::Debug_DrawVoxelCollisionProfile(UPrimitiveComponent*
 	bool bUseCheapBoundsCollision = false;
 	float boundsScaleFactor = 1.f;
 	bool bDrawDebug = false;
-	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(MeshOrPrimitive), bResultIsValid, bIgnoreMeshOriginOccupancy, bDisableCacheUsage,
+	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(MeshOrPrimitive), bResultIsValid, VoxelCollisionProfileCache_GameThread, bIgnoreMeshOriginOccupancy, bDisableCacheUsage,
 		CustomCacheIdentifier, bReloadCollisionCache, bUseCheapBoundsCollision, boundsScaleFactor, bDrawDebug);
 
 	// ~~~
@@ -1530,9 +1595,9 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 	static const int32 expansionStepSize = 2;
 	static const int32 numIterations = 2;
 
-	const int xGuessList[neighborGuessList] = { 0,  2,  2, -2, -2, -2,  2,  0, -2};
-	const int yGuessList[neighborGuessList] = { 0,  0,  2,  0, -2,  2, -2,  0, -2};
-	const int zGuessList[neighborGuessList] = { 1,  1,  1,  1,  1,  1,  1, -1, -1};
+	const int xGuessList[neighborGuessList] = { 0,  2,  2, -2, -2, -2,  2,  0, -2 };
+	const int yGuessList[neighborGuessList] = { 0,  0,  2,  0, -2,  2, -2,  0, -2 };
+	const int zGuessList[neighborGuessList] = { 1,  1,  1,  1,  1,  1,  1, -1, -1 };
 
 	for (int32 step = 1; step <= numIterations; step++)
 	{
@@ -1544,11 +1609,11 @@ FDonNavigationVoxel* ADonNavigationManager::GetClosestNavigableVolume(FVector Lo
 			{
 				if (!bShouldSweep)
 					return volumeGuess;
-				else if (IsDirectPathLineSweep(CollisionComponent, Location, volumeGuess->Location, hit, bConsiderInitialOverlaps, CollisionShapeInflation))				
-					return volumeGuess;				
-			}				
+				else if (IsDirectPathLineSweep(CollisionComponent, Location, volumeGuess->Location, hit, bConsiderInitialOverlaps, CollisionShapeInflation))
+					return volumeGuess;
+			}
 		}
-	}	
+	}
 	
 	// 2 b) So we still haven't found an ideal neighbor. It's time to methodically scan for best neighbors:
 	const int32 neighborSearchMaxDepth = 2;
@@ -1596,7 +1661,10 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVolume(FVector &DesiredLocati
 			for (const auto& tweakDir : locationTweaks)
 			{
 				FVector tweak = tweakDir * tweakMagnitude;
-				FVector locationToSample = DesiredLocation + tweak;
+				FVector locationToSample = DesiredLocation + tweak;				
+				FVector desiredLocationToSample = DesiredLocation + tweakDir * UnrealPhyxPenetrationDepth; // very important!
+
+				//DrawDebugSphere_Safe(GetWorld(), locationToSample, 6.f, 16, FColor::Yellow, false, 5.f);
 
 				auto volume = VolumeAt(locationToSample);
 				if (!volume || !CanNavigate(volume))
@@ -1604,8 +1672,9 @@ FDonNavigationVoxel* ADonNavigationManager::ResolveVolume(FVector &DesiredLocati
 
 				FHitResult outHit;
 				const bool bConsiderInitialOverlaps = true; // Direction of sweep is important: If the desired location is intersecting a collision body the only way we can trace to it is from the opposite end, i.e. the guess-list volume
-				if (!IsDirectPathLineSweep(CollisionComponent, volume->Location, DesiredLocation, outHit, bConsiderInitialOverlaps, CollisionShapeInflation))
-					continue;				
+				
+				if (!IsDirectPathLineSweep(CollisionComponent, locationToSample, desiredLocationToSample, outHit, bConsiderInitialOverlaps, CollisionShapeInflation))
+					continue;
 
 				UE_LOG(DoNNavigationLog, Warning, TEXT("Substitute Origin or Destination (%s offset) is being used for pawn to overcome initial overlap. (Can be disabled in QueryParams)"), *tweak.ToString());
 
@@ -1718,6 +1787,7 @@ bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &Res
 			{
 				FVector tweak = tweakDir * tweakMagnitude;			
 				FVector locationToSample = DesiredLocation + tweak;
+				FVector desiredLocationToSample = DesiredLocation + tweakDir * UnrealPhyxPenetrationDepth; // very important!
 
 				ResolvedLocation = VolumeOriginAt(locationToSample);
 				if (!CanNavigate(ResolvedLocation))
@@ -1725,7 +1795,7 @@ bool ADonNavigationManager::ResolveVector(FVector &DesiredLocation, FVector &Res
 
 				FHitResult outHit;
 				const bool bConsiderInitialOverlaps = true; // Direction of sweep is important: If the desired location is intersecting a collision body the only way we can trace to it is from the opposite end, i.e. the guess-list volume
-				if (!IsDirectPathLineSweep(CollisionComponent, locationToSample, DesiredLocation, outHit, bConsiderInitialOverlaps, CollisionShapeInflation))
+				if (!IsDirectPathLineSweep(CollisionComponent, locationToSample, desiredLocationToSample, outHit, bConsiderInitialOverlaps, CollisionShapeInflation))
 					continue;
 
 				UE_LOG(DoNNavigationLog, Warning, TEXT("Substitute Origin or Destination (%s offset) is being used for pawn to overcome initial overlap. (Can be disabled in QueryParams)"), *tweak.ToString());
@@ -1918,7 +1988,7 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 		if (Origin != Actor->GetActorLocation())
 		{
 			UE_LOG(DoNNavigationLog, Warning, TEXT("Forcibly shifting %s's pathfinding origin to new origin %s for viable pathfinding. (Can be disabled in QueryParams)"), *Actor->GetName());
-			// Actor->SetActorLocation(Origin, false); // New design: We no longer teleport the pawn. If all our calculations have gone right the pawn should be free to travel to the new origin.
+			 Actor->SetActorLocation(Origin, false); // New design: We no longer teleport the pawn. If all our calculations have gone right the pawn should be free to travel to the new origin.
 		}
 	}
 
@@ -1932,7 +2002,7 @@ bool ADonNavigationManager::FindPathSolution_StressTesting(AActor* Actor, FVecto
 	// Load voxel collision profile:
 	bool bResultIsValid = false;
 	const bool bIgnoreMeshOriginOccupancy = true;
-	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(CollisionComponent), bResultIsValid, bIgnoreMeshOriginOccupancy);
+	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(CollisionComponent), bResultIsValid, VoxelCollisionProfileCache_GameThread, bIgnoreMeshOriginOccupancy);
 
 	uint64 timerPathfinding = DoNNavigation::Debug_GetTimer();
 	
@@ -2020,18 +2090,20 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	}
 
 	// Does this actor already have a running query scheduled with us?
-	if (HasTask(Actor) && !QueryParams.bForceRescheduleQuery)
+	if (HasTask(Actor))
 	{
-		UE_LOG(DoNNavigationLog, Warning, TEXT("%s"), *FString::Printf(TEXT("%s already has an active task. If you really need to force reschedule a new task, set bForceRescheduleQuery to true in query params."), Actor ? *Actor->GetName() : *FString("Invalid")));
+		if (QueryParams.bForceRescheduleQuery)
+		{
+			// Aborts the existing task and removes it from the active task list
+			CleanupExistingTaskForActor(Actor);
+		}
+		else
+		{
+			UE_LOG(DoNNavigationLog, Warning, TEXT("%s"), *FString::Printf(TEXT("%s already has an active task. If you really need to force reschedule a new task, set bForceRescheduleQuery to true in query params."), Actor ? *Actor->GetName() : *FString("Invalid")));
 
-		return false;
-	}		
-	else
-	{
-		// Aborts the existing task and removes it from the active task list
-
-		CleanupExistingTaskForActor(Actor);
-	}	
+			return false;
+		}
+	}
 
 	FVector Origin = Actor->GetActorLocation();
 
@@ -2111,7 +2183,7 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	// Load voxel collision profile:
 	bool bResultIsValid = false;
 	const bool bIgnoreMeshOriginOccupancy = true;
-	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(CollisionComponent), bResultIsValid, bIgnoreMeshOriginOccupancy);
+	auto voxelCollisionProfile = GetVoxelCollisionProfileFromMesh(FDonMeshIdentifier(CollisionComponent), bResultIsValid, VoxelCollisionProfileCache_GameThread, bIgnoreMeshOriginOccupancy);
 		
 	// Prepare task:
 	FDonNavigationQueryTask request = FDonNavigationQueryTask( 
@@ -2128,7 +2200,7 @@ bool ADonNavigationManager::SchedulePathfindingTask(AActor* Actor, FVector Desti
 	return true;
 }
 
-void ADonNavigationManager::AddPathfindingTask(FDonNavigationQueryTask& Task)
+void ADonNavigationManager::AddPathfindingTask(const FDonNavigationQueryTask& Task)
 {
 	if (!bMultiThreadingEnabled)
 	{
@@ -2136,11 +2208,27 @@ void ADonNavigationManager::AddPathfindingTask(FDonNavigationQueryTask& Task)
 	}
 	else
 	{
-		FScopeLock Lock(&CriticalSection_Pathing);
+		ActiveNavigationTaskOwners.Add(Task.Data.Actor.Get());
+		NewNavigationTasks.Enqueue(Task);
 
-		ActiveNavigationTasks.Add(Task);
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new nav task"));
 	}
-	
+}
+
+void ADonNavigationManager::ReceiveAsyncNavigationTasks()
+{
+	if (NewNavigationTasks.IsEmpty())
+		return;
+
+	FDonNavigationQueryTask newlyArrivedTask;
+	bool bHasNewTask = NewNavigationTasks.Dequeue(newlyArrivedTask);
+
+	if (bHasNewTask)
+	{
+		ActiveNavigationTasks.Add(newlyArrivedTask);
+
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new nav task"));
+	}
 }
 
 void ADonNavigationManager::AbortPathfindingTask(AActor* Actor)
@@ -2151,10 +2239,27 @@ void ADonNavigationManager::AbortPathfindingTask(AActor* Actor)
 	}
 	else
 	{
-		FScopeLock Lock(&CriticalSection_Pathing);
+		ActiveNavigationTaskOwners.Remove(Actor);		
+		NewNavigationAborts.Enqueue(Actor);
 
-		AbortPathfindingTask_Internal(Actor);
-	}	
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new abort request"));
+	}
+}
+
+void ADonNavigationManager::ReceiveAsyncAbortRequests()
+{
+	if (NewNavigationAborts.IsEmpty())
+		return;
+
+	AActor* actor;
+	bool bHasAbortRequest = NewNavigationAborts.Dequeue(actor);
+
+	if (bHasAbortRequest)
+	{
+		AbortPathfindingTask_Internal(actor);
+
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new abort request"));
+	}
 }
 
 void ADonNavigationManager::AbortPathfindingTask_Internal(AActor* Actor)
@@ -2369,10 +2474,7 @@ void ADonNavigationManager::TickScheduledPathfindingTasks(float DeltaSeconds, in
 
 void ADonNavigationManager::TickScheduledPathfindingTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick)
 {
-	{
-		FScopeLock Lock(&CriticalSection_Pathing);
-		TickScheduledPathfindingTasks(DeltaSeconds, MaxIterationsPerTick);
-	}
+	TickScheduledPathfindingTasks(DeltaSeconds, MaxIterationsPerTick);
 }
 
 void ADonNavigationManager::CompleteNavigationTask(int32 TaskIndex)
@@ -2392,17 +2494,16 @@ void ADonNavigationManager::CompleteNavigationTask(int32 TaskIndex)
 		// Notify owner
 		task_safecopy.ResultHandler.ExecuteIfBound(task_safecopy.Data);
 
-		
+
 	}
 	else
-	{	
-		FScopeLock Lock(&CriticalSection_Pathing);
-
+	{
 		CompletedNavigationTasks.Enqueue(ActiveNavigationTasks[TaskIndex]);
+		ActiveNavigationTasks.RemoveAtSwap(TaskIndex);
 
-		ActiveNavigationTasks.RemoveAtSwap(TaskIndex);		
+		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Blue, FString("[async thread] Enqueued new nav result"));
 	}
-	
+
 }
 
 bool ADonNavigationManager::PrepareSolution(FDonNavigationQueryTask& Task)
@@ -2792,3 +2893,12 @@ void ADonNavigationManager::DrawDebugVoxel_Safe(UWorld* World, FVector Center, F
 	else
 		DrawDebugVoxelsQueue.Enqueue(FDrawDebugVoxelRequest(Center, Box, Color, bPersistentLines, LifeTime, DepthPriority, Thickness));
 }
+
+// New 2017 features!
+void ADonNavigationManager::SetIsUnbound(bool bIsUnboundIn)
+{
+	bIsUnbound = bIsUnboundIn;
+
+	RefreshPerformanceSettings();
+}
+

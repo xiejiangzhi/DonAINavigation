@@ -16,6 +16,10 @@
 
 #include "DonNavigationCommon.h"
 #include "Multithreading/DonDrawDebugThreadSafe.h"
+#include "CollisionQueryParams.h"
+#include "WorldCollision.h"
+#include "Queue.h"
+#include "Components/BoxComponent.h"
 
 #include "DonNavigationManager.generated.h"
 
@@ -99,14 +103,13 @@ struct FDonVoxelCollisionProfile
 * Collision payloads are any generic set of data passed from an external source (eg: The Behavior Tree "Fly To" node provided with this plugin) to the manager.
 * They are passed back via callbacks to anyone listening to the manager's query results, dynamic collision updates and other such callbacks.
 */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FDonNavigationDynamicCollisionPayload
 {
 	GENERATED_USTRUCT_BODY()
 	
 	void* CustomDelegatePayload;	
 	
-	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	FDonNavigationVoxel Voxel;
 
 	FDonNavigationDynamicCollisionPayload(){}
@@ -212,7 +215,7 @@ struct FDonNavVoxelXYZ
 /**
 * These parameters are passed by end users (via direct API calls or via the "Fly To" Behavior Tree node) to customize various aspects of this pathfinding system
 */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FDoNNavigationQueryParams
 {
 	GENERATED_USTRUCT_BODY()
@@ -282,7 +285,7 @@ struct FDoNNavigationQueryParams
 };
 
 /** Navigation Query Debug Parameters  */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FDoNNavigationDebugParams
 {
 	GENERATED_USTRUCT_BODY()
@@ -456,6 +459,7 @@ struct FDonNavigationTask
 	GENERATED_USTRUCT_BODY()
 
 	virtual void BroadcastResult() {}
+	virtual ~FDonNavigationTask() {}
 };
 
 /**
@@ -466,7 +470,6 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 {
 	GENERATED_USTRUCT_BODY()	
 
-	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	FDoNNavigationQueryData Data;
 
 	UPROPERTY()
@@ -476,6 +479,7 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 	FDonNavigationDynamicCollisionDelegate DynamicCollisionListener;
 
 	FDonNavigationQueryTask() {}
+	virtual ~FDonNavigationQueryTask() {}
 
 	FDonNavigationQueryTask(FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandlerIn, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifierIn)
 		: Data(InData), ResultHandler(ResultHandlerIn), DynamicCollisionListener(DynamicCollisionNotifierIn)
@@ -502,7 +506,7 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 	virtual void BroadcastResult() override
 	{
 		ResultHandler.ExecuteIfBound(Data);
-	}
+	}	
 };
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDonCollisionSamplerCallback, bool, bTaskSuccessful);
@@ -553,6 +557,8 @@ private:
 			return NAME_None;
 	}
 };
+
+typedef TMap<FDonMeshIdentifier, FDonVoxelCollisionProfile> DonVoxelProfileCache;
 
 USTRUCT()
 struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
@@ -613,6 +619,7 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 	}
 
 	FDonNavigationDynamicCollisionTask(){}
+	virtual ~FDonNavigationDynamicCollisionTask() {}
 
 	FDonNavigationDynamicCollisionTask(FDonMeshIdentifier MeshIdIn, FDonCollisionSamplerCallback ResultHandlerIn, FDonNavigationVoxel MeshOriginalVolumeIn, bool bDisableCacheUsageIn, bool bReloadCollisionCacheIn, bool bUseCheapBoundsCollisionIn, float BoundsScaleFactorIn, bool bDrawDebugIn)
 		: MeshId(MeshIdIn), ResultHandler(ResultHandlerIn), MeshOriginalVolume(MeshOriginalVolumeIn), bReloadCollisionCache(bReloadCollisionCacheIn), bDisableCacheUsage(bDisableCacheUsageIn), bUseCheapBoundsCollision(bUseCheapBoundsCollisionIn), BoundsScaleFactor(BoundsScaleFactorIn), bDrawDebug(bDrawDebugIn)
@@ -630,8 +637,12 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 	friend uint32 GetTypeHash(const FDonNavigationDynamicCollisionTask& Other)	
 	{	
 		return Other.TaskHashValue; //GetTypeHash(Other.MeshId);
-	}
+	}	
 };
+
+struct FCollisionShape;
+class USceneComponent;
+class UBillboardComponent;
 
 /**
  * 
@@ -661,13 +672,16 @@ protected:
 	FCollisionQueryParams VoxelCollisionQueryParams;
 	FCollisionQueryParams VoxelCollisionQueryParams2;
 	TMap<FDonNavigationVoxel*, TArray <FDonNavigationVoxel*>> NavGraphCache;
-	TMap<FDonMeshIdentifier, FDonVoxelCollisionProfile> VoxelCollisionProfileCache;
+	TMap<FDonMeshIdentifier, FDonVoxelCollisionProfile> VoxelCollisionProfileCache_WorkerThread;
+	TMap<FDonMeshIdentifier, FDonVoxelCollisionProfile> VoxelCollisionProfileCache_GameThread;
 
 	bool bRegistrationCompleteForComponents;
 	int32 RegistrationIndexCurrent;
 	int32 MaxRegistrationsPerTick;	
 
 public:
+
+	void SetIsUnbound(bool bIsUnboundIn);
 
 	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	bool bIsUnbound = false;
@@ -678,7 +692,6 @@ public:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = Translation)
 	UBillboardComponent* Billboard;	
 
-	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	FDonNavVoxelXYZ NAVVolumeData;
 
 	/* Represents the side of the cube used to build the voxel. Eg: a value of 300 produces a cube 300x300x300*/
@@ -717,26 +730,48 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
 	TArray<float> AutoCorrectionGuessList;
 
+	/* Estimates the maximum possible penetration that can occur based on how Unreal's Physx handles collisions.
+	*   The default is a surprisingly high value, but this was derived from actual tests with the sample project's "thin glass tubes" usecase*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = ObstacleDetection)
+	float UnrealPhyxPenetrationDepth = 100.f;	
+
+	//
+
 	/** If set to true, collision checks will be performed for each and every voxel when the game begins. Warning: This can slow down loading of the game significantly.
 	 *  Default behavior is set to false, meaning collision data will always be lazy loaded upn demand. This is the recommended approach */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Game Startup")
 	bool PerformCollisionChecksOnStartup;
 
-	// Performance setings
+	// Performance settings - Bound worlds (if multi-threading is enabled, these will be overwritten at BeginPlay with the values in the next section!)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings")
+	bool bMultiThreadingEnabled = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Bound Worlds | SingleThread")
 	int32 MaxPathSolverIterationsPerTick = 500;	
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings")
-	int32 MaxCollisionSolverIterationsPerTick = 250;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Bound Worlds | SingleThread")
+	int32 MaxCollisionSolverIterationsPerTick = 250;	
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings - Multithreading")
-	bool bMultiThreadingEnabled = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings - Multithreading")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Bound Worlds | Multithreaded")
 	int32 MaxPathSolverIterationsOnThread = 1000;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings - Multithreading")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Bound Worlds | Multithreaded")
 	int32 MaxCollisionSolverIterationsOnThread = 500;
+
+	// Performance settings - Infinite worlds
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Infinite Worlds | SingleThread")
+	int32 MaxPathSolverIterationsPerTick_Unbound = 15;	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Infinite Worlds | SingleThread")
+	int32 MaxCollisionSolverIterationsPerTick_Unbound = 50;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Infinite Worlds | Multithreaded")
+	int32 MaxPathSolverIterationsOnThread_Unbound = 1000;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance Settings | Infinite Worlds | Multithreaded")
+	int32 MaxCollisionSolverIterationsOnThread_Unbound = 500;
+
+	void RefreshPerformanceSettings();
 
 	// World generation
 	UFUNCTION(BlueprintCallable, Category = "DoN Navigation")
@@ -817,19 +852,36 @@ protected:
 	
 
 private:
-	
-	// Scheduled Tasks:
-	TArray<FDonNavigationQueryTask,	TInlineAllocator<25>>  ActiveNavigationTasks;
-	TSet<FDonNavigationDynamicCollisionTask>               ActiveDynamicCollisionTasks;
 
 	// Multi-threading
 	friend class FDonNavigationWorker;
 	class FDonNavigationWorker* WorkerThread;
+	
+	// Scheduled Tasks: 
+
+	//(owned by worker thread)
+	TArray<FDonNavigationQueryTask,	TInlineAllocator<25>>  ActiveNavigationTasks;	
+	TArray<FDonNavigationDynamicCollisionTask, TInlineAllocator<25>> ActiveDynamicCollisionTasks;
+
+	//(owned by game thread)
+	UPROPERTY()
+	TSet<AActor*>  ActiveNavigationTaskOwners;
+
+	UPROPERTY()
+	TSet<UPrimitiveComponent*>  ActiveCollisionTaskOwners;	
+
+	// Shared between worker thread and game thread via TQueue:
+	TQueue<FDonNavigationQueryTask>  NewNavigationTasks;
+	TQueue<AActor*>  NewNavigationAborts;
+	TQueue<FDonNavigationDynamicCollisionTask>  NewDynamicCollisionTasks;
 
 	TQueue<FDonNavigationQueryTask>			   CompletedNavigationTasks;
 	TQueue<FDonNavigationDynamicCollisionTask> CompletedCollisionTasks;
 	TQueue<FDonNavigationVoxel*> DynamicCollisionBroadcastQueue;
 
+	void ReceiveAsyncNavigationTasks();
+	void ReceiveAsyncAbortRequests();
+	void ReceiveAsyncCollisionTasks();
 	void ReceiveAsyncResults();
 	void ReceiveAsyncDynamicCollisionUpdates();
 	void DrawAsyncDebugRequests();
@@ -957,8 +1009,8 @@ public:
 		const FVector origin = GetActorLocation();
 
 		return  DesiredLocation.X >= origin.X && DesiredLocation.X <= (origin.X + XGridSize * VoxelSize) &&
-				DesiredLocation.Y >= origin.Y && DesiredLocation.Y <= (origin.Y + YGridSize * VoxelSize) &&
-				DesiredLocation.Z >= origin.Z && DesiredLocation.Z <= (origin.Z + ZGridSize * VoxelSize);
+					DesiredLocation.Y >= origin.Y && DesiredLocation.Y <= (origin.Y + YGridSize * VoxelSize) &&
+					DesiredLocation.Z >= origin.Z && DesiredLocation.Z <= (origin.Z + ZGridSize * VoxelSize);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
@@ -995,7 +1047,7 @@ public:
 
 	/** Does this actor have an active pathfinding task already scheduled with the navigation manager? */
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
-	bool HasTask(AActor* Actor) { return ActiveNavigationTasks.ContainsByPredicate([&Actor](const FDonNavigationQueryTask& task) {return task.Data.Actor.Get() == Actor; }); };
+	bool HasTask(AActor* Actor) { return ActiveNavigationTaskOwners.Contains(Actor); }
 
 
 	/**
@@ -1060,7 +1112,7 @@ public:
 	
 	void VoxelCacheClearByKey(const FDonMeshIdentifier &MeshId)
 	{
-		VoxelCollisionProfileCache.Remove(MeshId);
+		VoxelCollisionProfileCache_WorkerThread.Remove(MeshId);
 	}
 
 	/** 
@@ -1146,14 +1198,15 @@ private:
 	void PackageRawSolution(FDonNavigationQueryTask& task);
 	void PackageDirectSolution(FDonNavigationQueryTask& Task);
 
-	// Thread-aware routines
-	FCriticalSection CriticalSection_Pathing;
-	FCriticalSection CriticalSection_Collisions;
-	void AddPathfindingTask(FDonNavigationQueryTask& Task);
+	// Thread-aware routines	
+	//FCriticalSection CriticalSection_Collisions;
+
+	void AddPathfindingTask(const FDonNavigationQueryTask& Task);
 	void AddDynamicCollisionTask(FDonNavigationDynamicCollisionTask& Task);
-	bool IsDynamicCollisionTaskActive(FDonNavigationDynamicCollisionTask& Task);
+	bool IsDynamicCollisionTaskActive(const FDonNavigationDynamicCollisionTask& Task);
+	bool PrepareDynamicCollisionTask(FDonNavigationDynamicCollisionTask& task, bool &bOverallStatus);
 	void CompleteNavigationTask(int32 TaskIndex);
-	void CompleteCollisionTask(FDonNavigationDynamicCollisionTask& Task, bool bIsSuccess);
+	void CompleteCollisionTask(const int32 TaskIndex, bool bIsSuccess);
 
 	void AbortPathfindingTask_Internal(AActor* Actor);
 	void AbortPathfindingTaskByIndex(int32 TaskIndex);	
@@ -1161,7 +1214,7 @@ private:
 
 	// Voxel collision sampling:
 	void UpdateVoxelCollision(FDonNavigationVoxel& Volume);
-	FDonVoxelCollisionProfile GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy = false, bool bDisableCacheUsage = false, FName CustomCacheIdentifier = NAME_None, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
+	FDonVoxelCollisionProfile GetVoxelCollisionProfileFromMesh(const FDonMeshIdentifier& MeshId, bool &bResultIsValid, DonVoxelProfileCache& PreferredCache, bool bIgnoreMeshOriginOccupancy = false, bool bDisableCacheUsage = false, FName CustomCacheIdentifier = NAME_None, bool bReloadCollisionCache = false, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
 	FDonVoxelCollisionProfile SampleVoxelCollisionForMesh(UPrimitiveComponent* Mesh, bool &bResultIsValid, bool bIgnoreMeshOriginOccupancy = false, FName CustomCacheIdentifier = NAME_None, bool bUseCheapBoundsCollision = false, float BoundsScaleFactor = 1.f, bool DrawDebug = false);
 
 	// Dynamic collision listeners:

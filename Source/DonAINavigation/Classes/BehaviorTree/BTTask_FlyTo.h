@@ -94,7 +94,9 @@ public:
 	virtual FString GetStaticDescription() const override;	
 	virtual void InitializeFromAsset(UBehaviorTree& Asset) override;
 
-	void HandleTaskFailure(UBlackboardComponent* blackboard);
+	EBTNodeResult::Type HandleTaskFailure(UBehaviorTreeComponent& OwnerComp, UBlackboardComponent* Blackboard);
+	void HandleTaskFailureAndExit(UBehaviorTreeComponent& OwnerComp);
+
 	EBlackboardNotificationResult OnBlackboardValueChange(const UBlackboardComponent& Blackboard, FBlackboard::FKey ChangedKeyID);
 
 #if WITH_EDITOR
@@ -103,15 +105,7 @@ public:
 
 	// Behavior Tree Input:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	FBlackboardKeySelector FlightLocationKey;
-
-	/** Recalculate path enable */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation", meta = (InlineEditConditionToggle))
-	uint32 bRecalcPathOnDestinationChanged : 1;
-
-	/** Recalculate path if FlightLocation value changed. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DoN Navigation", meta = (EditCondition = "bRecalcPathOnDestinationChanged"))
-	float RecalculatePathTolerance;
+	FBlackboardKeySelector FlightLocationKey;	
 
 	/* Optional: Useful in somecases where you want failure or success of a task to automatically update a particular blackboard key*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
@@ -123,6 +117,17 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
 	float MinimumProximityRequired = 15.f;
+
+	// Venu's Note:- Code for repath tolerance below was kindly contributed by Vladimir Ivanov (Github @ArCorvus). Thank you Vladimir!
+	//
+	/** Recalculate path enable */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DoN Navigation", meta = (InlineEditConditionToggle))
+	uint32 bRecalcPathOnDestinationChanged : 1;
+
+	/** Recalculate path if FlightLocation value changed. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "DoN Navigation", meta = (EditCondition = "bRecalcPathOnDestinationChanged"))
+	float RecalculatePathTolerance;
+	//
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
 	FDoNNavigationQueryParams QueryParams;
@@ -139,6 +144,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	ADonNavigationManager* NavigationManager;
 
+	/** In some scenarios, it may be desirable to allow the A.I. to teleport to its intended destination  if pathfinding failed for some reason
+	*    Set this flag to true to if you want this behavior*/
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
+	bool bTeleportToDestinationUponFailure = false;
 
 protected:
 
@@ -154,4 +163,5 @@ protected:
 
 	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
 
+	virtual void TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWrapUpLatentTask = true);
 };
