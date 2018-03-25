@@ -94,8 +94,8 @@ public:
 	virtual FString GetStaticDescription() const override;	
 	virtual void InitializeFromAsset(UBehaviorTree& Asset) override;
 
-	EBTNodeResult::Type HandleTaskFailure(UBehaviorTreeComponent& OwnerComp, UBlackboardComponent* Blackboard);
-	void HandleTaskFailureAndExit(UBehaviorTreeComponent& OwnerComp);
+	EBTNodeResult::Type HandleTaskFailure(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, UBlackboardComponent* Blackboard);
+	void HandleTaskFailureAndExit(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);
 
 	EBlackboardNotificationResult OnBlackboardValueChange(const UBlackboardComponent& Blackboard, FBlackboard::FKey ChangedKeyID);
 
@@ -149,6 +149,10 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
 	bool bTeleportToDestinationUponFailure = false;
 
+	// Makeshift arrangement until the Task Owner / Task List discrepancy bug is comprehensively conquered
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
+	float MaxTimeBeforeTeleport = 10.f;
+
 protected:
 
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
@@ -163,5 +167,10 @@ protected:
 
 	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
 
-	virtual void TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWrapUpLatentTask = true);
+	virtual bool TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWrapUpLatentTask = true);
+
+	//
+	TMap<TWeakObjectPtr<AActor>, float> LastRequestTimestamps;
+	//float LastRequestTimestamp;
+	const static float RequestThrottleInterval;
 };

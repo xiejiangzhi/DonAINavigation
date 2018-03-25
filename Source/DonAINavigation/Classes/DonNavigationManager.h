@@ -453,12 +453,18 @@ struct FDoNNavigationQueryData
 */
 DECLARE_DYNAMIC_DELEGATE_OneParam(FDoNNavigationResultHandler, const FDoNNavigationQueryData&, Data);
 
+enum class EDonNavigationRequestType : uint8
+{
+	New,
+	Abort,
+};
+
 USTRUCT()
 struct FDonNavigationTask
 {
-	GENERATED_USTRUCT_BODY()
+	GENERATED_USTRUCT_BODY()		
 
-	virtual void BroadcastResult() {}
+	virtual void BroadcastResult() {}	
 	virtual ~FDonNavigationTask() {}
 };
 
@@ -468,7 +474,9 @@ struct FDonNavigationTask
 USTRUCT()
 struct FDonNavigationQueryTask : public FDonNavigationTask
 {
-	GENERATED_USTRUCT_BODY()	
+	GENERATED_USTRUCT_BODY()
+
+	EDonNavigationRequestType RequestType;
 
 	FDoNNavigationQueryData Data;
 
@@ -478,8 +486,10 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 	UPROPERTY()
 	FDonNavigationDynamicCollisionDelegate DynamicCollisionListener;
 
-	FDonNavigationQueryTask() {}
+	FDonNavigationQueryTask() { RequestType = EDonNavigationRequestType::New; }
 	virtual ~FDonNavigationQueryTask() {}
+
+	FDonNavigationQueryTask(AActor* InActor, EDonNavigationRequestType InRequestType) { Data.Actor = InActor; RequestType = InRequestType;}
 
 	FDonNavigationQueryTask(FDoNNavigationQueryData InData, FDoNNavigationResultHandler ResultHandlerIn, FDonNavigationDynamicCollisionDelegate DynamicCollisionNotifierIn)
 		: Data(InData), ResultHandler(ResultHandlerIn), DynamicCollisionListener(DynamicCollisionNotifierIn)
@@ -496,6 +506,7 @@ struct FDonNavigationQueryTask : public FDonNavigationTask
 		}
 
 		Data.QueryStatus = EDonNavigationQueryStatus::InProgress;
+		RequestType = EDonNavigationRequestType::New;
 	}
 
 	FORCEINLINE bool IsQueryComplete()
@@ -625,7 +636,6 @@ struct FDonNavigationDynamicCollisionTask : public FDonNavigationTask
 		: MeshId(MeshIdIn), ResultHandler(ResultHandlerIn), MeshOriginalVolume(MeshOriginalVolumeIn), bReloadCollisionCache(bReloadCollisionCacheIn), bDisableCacheUsage(bDisableCacheUsageIn), bUseCheapBoundsCollision(bUseCheapBoundsCollisionIn), BoundsScaleFactor(BoundsScaleFactorIn), bDrawDebug(bDrawDebugIn)
 	{
 		i = j = k = 0;
-
 		TaskHashValue = GetTypeHash(MeshId.Mesh);
 	}
 
@@ -868,11 +878,14 @@ private:
 	TSet<AActor*>  ActiveNavigationTaskOwners;
 
 	UPROPERTY()
-	TSet<UPrimitiveComponent*>  ActiveCollisionTaskOwners;	
+	TSet<UPrimitiveComponent*>  ActiveCollisionTaskOwners;
 
+private:
+	// @todo: Need a unified queue for new nav tasks and new nav aborts, That will ensure sequence integrity for complex usecases (pursuit/etc) that are spamming navtask/abort/navtask/abort/etc
 	// Shared between worker thread and game thread via TQueue:
-	TQueue<FDonNavigationQueryTask>  NewNavigationTasks;
-	TQueue<AActor*>  NewNavigationAborts;
+	//TQueue<FDonNavigationQueryTask>  NewNavigationTasks;
+	//TQueue<AActor*>  NewNavigationAborts;
+	TQueue<FDonNavigationQueryTask> NewNavigationTasks;
 	TQueue<FDonNavigationDynamicCollisionTask>  NewDynamicCollisionTasks;
 
 	TQueue<FDonNavigationQueryTask>			   CompletedNavigationTasks;
@@ -880,7 +893,7 @@ private:
 	TQueue<FDonNavigationVoxel*> DynamicCollisionBroadcastQueue;
 
 	void ReceiveAsyncNavigationTasks();
-	void ReceiveAsyncAbortRequests();
+	//void ReceiveAsyncAbortRequests(); // deprecated
 	void ReceiveAsyncCollisionTasks();
 	void ReceiveAsyncResults();
 	void ReceiveAsyncDynamicCollisionUpdates();
@@ -1247,7 +1260,7 @@ private:
 	// Path solution generation and optimization pass
 	void PathSolutionFromVolumeSolution(const TArray<FDonNavigationVoxel*>& VolumeSolution, TArray<FVector> &PathSolution, FVector Origin, FVector Destination, const FDoNNavigationDebugParams& DebugParams);	
 	void OptimizePathSolution(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);	
-	void OptimizePathSolution_Pass1_LineTrace(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);
+	void OptimizePathSolution_Pass1_LineTrace(UPrimitiveComponent* CollisionComponent, const TArray<FVector>& PathSolution, TArray<FVector> &PathSolutionOptimized, float CollisionShapeInflation = 0.f);	
 
 	////////////////////////////////////////////////////////////////////////////////////////
 };

@@ -39,7 +39,7 @@ class DONAINAVIGATION_API IDonNavigator
 	void OnLocomotionBegin();
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
-	void OnLocomotionEnd();
+	void OnLocomotionEnd(const bool bLocomotionSuccess);
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Don Navigation")
 	void OnLocomotionAbort();

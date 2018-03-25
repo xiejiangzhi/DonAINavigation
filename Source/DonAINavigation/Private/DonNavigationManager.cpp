@@ -23,6 +23,8 @@ DECLARE_CYCLE_STAT(TEXT("DonNavigation ~ PathfindingSolver"),            STAT_Pa
 DECLARE_CYCLE_STAT(TEXT("DonNavigation ~ DynamicCollisionUpdates"),  STAT_DynamicCollisionUpdates, STATGROUP_DonNavigation);
 DECLARE_CYCLE_STAT(TEXT("DonNavigation ~ DynamicCollisionSampling"), STAT_DynamicCollisionSampling, STATGROUP_DonNavigation);
 
+#define DEBUG_DoNAI_THREADS 0
+
 void FDonNavigationVoxel::BroadcastCollisionUpdates()
 {
 	// Protect ourselves from delegate owners reallocating the TArray while we're iterating:
@@ -149,7 +151,11 @@ void ADonNavigationManager::ReceiveAsyncResults()
 		task.BroadcastResult();
 
 		ActiveNavigationTaskOwners.Remove(task.Data.Actor.Get());
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Orange, FString("[game thread] Received new nav result!"));
+
+#if DEBUG_DoNAI_THREADS
+		auto owner = task.Data.Actor.Get();
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [game thread] Received new nav result!"), owner ? *owner->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 
 	while (!CompletedCollisionTasks.IsEmpty())
@@ -159,7 +165,11 @@ void ADonNavigationManager::ReceiveAsyncResults()
 		task.BroadcastResult();
 
 		ActiveCollisionTaskOwners.Remove(task.MeshId.Mesh.Get());
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Orange, FString("[game thread] Completed new dynamic collision task!"));
+
+#if DEBUG_DoNAI_THREADS
+		auto owner = task.MeshId.Mesh.Get();
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [game thread] Completed new dynamic collision task!"), owner ? *owner->GetOwner()->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 }
 
@@ -780,8 +790,6 @@ bool ADonNavigationManager::IsDynamicCollisionTaskActive(const FDonNavigationDyn
 	}
 	else
 	{
-		//FScopeLock Lock(&CriticalSection_Collisions); return ActiveDynamicCollisionTasks.Contains(Task);
-
 		return ActiveCollisionTaskOwners.Contains(Task.MeshId.Mesh.Get());
 	}
 }
@@ -863,11 +871,13 @@ void ADonNavigationManager::AddDynamicCollisionTask(FDonNavigationDynamicCollisi
 	}
 	else
 	{
-		//FScopeLock Lock(&CriticalSection_Collisions);	ActiveDynamicCollisionTasks.Add(Task);
 		NewDynamicCollisionTasks.Enqueue(Task);
 		ActiveCollisionTaskOwners.Add(Task.MeshId.Mesh.Get());
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new collision task"));
+#if DEBUG_DoNAI_THREADS
+		auto owner = Task.MeshId.Mesh.Get();
+		UE_LOG(DoNNavigationLog, Warning, TEXT("[%s] [game thread] Enqueued new collision task"), owner ? *owner->GetOwner()->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 }
 
@@ -887,7 +897,10 @@ void ADonNavigationManager::ReceiveAsyncCollisionTasks()
 		if(bNeedsToScheduleTask)
 			ActiveDynamicCollisionTasks.Add(task);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new collision task"));
+#if DEBUG_DoNAI_THREADS
+		auto owner = task.MeshId.Mesh.Get();
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new collision task!"), owner ? *owner->GetOwner()->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 }
 
@@ -1044,8 +1057,6 @@ void ADonNavigationManager::TickScheduledCollisionTasks(float DeltaSeconds, int3
 void ADonNavigationManager::TickScheduledCollisionTasks_Safe(float DeltaSeconds, int32 MaxIterationsPerTick)
 {
 	TickScheduledCollisionTasks(DeltaSeconds, MaxIterationsPerTick);
-
-	//{ FScopeLock Lock(&CriticalSection_Collisions);		TickScheduledCollisionTasks(DeltaSeconds, MaxIterationsPerTick);	}
 }
 
 void ADonNavigationManager::CompleteCollisionTask(const int32 TaskIndex, bool bIsSuccess)
@@ -1069,13 +1080,14 @@ void ADonNavigationManager::CompleteCollisionTask(const int32 TaskIndex, bool bI
 	}
 	else
 	{
-		//FScopeLock Lock(&CriticalSection_Collisions);
-
 		CompletedCollisionTasks.Enqueue(task);
 
 		ActiveDynamicCollisionTasks.RemoveAtSwap(TaskIndex);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Blue, FString("[async thread] Enqueued new collision task result"));		
+#if DEBUG_DoNAI_THREADS
+		auto owner = task.MeshId.Mesh.Get();
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Enqueued new collision task result"), owner ? *owner->GetOwner()->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 	
 }
@@ -1528,6 +1540,7 @@ FDonNavigationVoxel* ADonNavigationManager::GetBestNeighborRecursive(FDonNavigat
 	for (auto neighbor : neighbors)
 	{
 		// need to optimize redundancy. A large number of voxels will get queried multiple times due to multi-neighbor relationships. Consider maintaining a hash (TSet) of visited neighbors
+		// @Bug - the function below should actually use "neighbor" and not "Volume"! As this needs more testing, the change is reserved for a future update.
 		auto bestVolume = GetBestNeighborRecursive(Volume, CurrentDepth + 1, NeighborSearchMaxDepth, Location, CollisionComponent, bConsiderInitialOverlaps, CollisionShapeInflation, bShouldSweep);
 		if (bestVolume)
 			return bestVolume;
@@ -1710,6 +1723,7 @@ bool ADonNavigationManager::GetClosestNavigableVector(FVector DesiredLocation, F
 	{
 		FCollisionObjectQueryParams objectParams = VoxelCollisionObjectParams;
 		objectParams.AddObjectTypesToQuery(CollisionComponent->GetCollisionObjectType());
+		// objectParams.RemoveObjectTypesToQuery(ECC_Pawn); // Some projects/usecases may benefit from enabling this line. It prevents initial overlaps with pawns from affecting pathfinding. Currently enabled for DoN The Nature Game!
 		FCollisionQueryParams queryParams = VoxelCollisionQueryParams;
 		queryParams.AddIgnoredComponent(CollisionComponent);
 		bInitialPositionCollides = GetWorld()->OverlapMultiByObjectType(outOverlaps, DesiredLocation, FQuat::Identity, objectParams, CollisionComponent->GetCollisionShape(1.f), queryParams);
@@ -2208,10 +2222,14 @@ void ADonNavigationManager::AddPathfindingTask(const FDonNavigationQueryTask& Ta
 	}
 	else
 	{
-		ActiveNavigationTaskOwners.Add(Task.Data.Actor.Get());
-		NewNavigationTasks.Enqueue(Task);
+		auto owner = Task.Data.Actor.Get();
+		ensure(owner);
+		ActiveNavigationTaskOwners.Add(owner);
+	    NewNavigationTasks.Enqueue(Task);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new nav task"));
+#if DEBUG_DoNAI_THREADS
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [game thread] Enqueued new nav task"), owner ? *owner->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 }
 
@@ -2225,27 +2243,70 @@ void ADonNavigationManager::ReceiveAsyncNavigationTasks()
 
 	if (bHasNewTask)
 	{
-		ActiveNavigationTasks.Add(newlyArrivedTask);
+		if (newlyArrivedTask.RequestType == EDonNavigationRequestType::New)
+		{
+			ActiveNavigationTasks.Add(newlyArrivedTask);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new nav task"));
+#if DEBUG_DoNAI_THREADS
+			auto owner = newlyArrivedTask.Data.Actor.Get();
+			UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new nav task"), owner ? *owner->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
+		}
+		else if (newlyArrivedTask.RequestType == EDonNavigationRequestType::Abort)
+		{
+			AbortPathfindingTask_Internal(newlyArrivedTask.Data.Actor.Get());
+
+#if DEBUG_DoNAI_THREADS
+			UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new abort request"), actor ? *actor->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
+		}
 	}
 }
 
+#if 0
+void ADonNavigationManager::ReceiveAsyncNavigationTasks()
+{
+	if (NewNavigationTasks.IsEmpty())
+		return;
+
+	FDonNavigationQueryTask newlyArrivedTask;
+	bool bHasNewTask = NewNavigationTasks.Dequeue(newlyArrivedTask);
+
+	if (bHasNewTask)
+	{
+		ActiveNavigationTasks.Add(newlyArrivedTask);
+
+#if DEBUG_DoNAI_THREADS
+		auto owner = newlyArrivedTask.Data.Actor.Get();
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new nav task"), owner ? *owner->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
+	}
+}
+#endif
+
 void ADonNavigationManager::AbortPathfindingTask(AActor* Actor)
 {
+	if (!HasTask(Actor))
+		return; // no-op. Also essential to prevent multi-threading issues due to superfluous abort requests piling up in the newNavAborts TQueue!
+
 	if (!bMultiThreadingEnabled)
 	{
 		AbortPathfindingTask_Internal(Actor);
 	}
 	else
 	{
-		ActiveNavigationTaskOwners.Remove(Actor);		
-		NewNavigationAborts.Enqueue(Actor);
+		ActiveNavigationTaskOwners.Remove(Actor);
+		//NewNavigationAborts.Enqueue(Actor);
+		FDonNavigationQueryTask abortTask(Actor, EDonNavigationRequestType::Abort);
+		NewNavigationTasks.Enqueue(abortTask);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Yellow, FString("[game thread] Enqueued new abort request"));
+#if DEBUG_DoNAI_THREADS
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [game thread] Enqueued new abort request"), Actor ? *Actor->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 }
 
+#if 0
 void ADonNavigationManager::ReceiveAsyncAbortRequests()
 {
 	if (NewNavigationAborts.IsEmpty())
@@ -2256,11 +2317,15 @@ void ADonNavigationManager::ReceiveAsyncAbortRequests()
 
 	if (bHasAbortRequest)
 	{
-		AbortPathfindingTask_Internal(actor);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Green, FString("[async thread] Received new abort request"));
+#if DEBUG_DoNAI_THREADS
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Received new abort request"), actor ? *actor->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
+
+		AbortPathfindingTask_Internal(actor);
 	}
 }
+#endif
 
 void ADonNavigationManager::AbortPathfindingTask_Internal(AActor* Actor)
 {
@@ -2306,11 +2371,17 @@ void ADonNavigationManager::StopListeningToDynamicCollisionsForPathIndex(FDonNav
 
 void ADonNavigationManager::AbortPathfindingTaskByIndex(int32 TaskIndex)
 {
+	auto owner = ActiveNavigationTasks[TaskIndex].Data.Actor.Get();
+
 	auto collisionListener = ActiveNavigationTasks[TaskIndex].DynamicCollisionListener;
 
 	StopListeningToDynamicCollisionsForPath(collisionListener, ActiveNavigationTasks[TaskIndex].Data);
 		
 	ActiveNavigationTasks.RemoveAtSwap(TaskIndex);
+
+#if DEBUG_DoNAI_THREADS
+	UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [%s] Executing new abort request"), owner ? *owner->GetName() : *FString("Unknown"), IsInGameThread() ? *FString("[game thread]") : *FString("[async thread]"));
+#endif //DEBUG_DoNAI_THREADS*/
 }
 
 
@@ -2498,10 +2569,14 @@ void ADonNavigationManager::CompleteNavigationTask(int32 TaskIndex)
 	}
 	else
 	{
+		auto owner = ActiveNavigationTasks[TaskIndex].Data.Actor.Get();
+
 		CompletedNavigationTasks.Enqueue(ActiveNavigationTasks[TaskIndex]);
 		ActiveNavigationTasks.RemoveAtSwap(TaskIndex);
 
-		//GEngine->AddOnScreenDebugMessage(-1, 100.f, FColor::Blue, FString("[async thread] Enqueued new nav result"));
+#if DEBUG_DoNAI_THREADS
+		UE_LOG(DoNNavigationLog, Display, TEXT("[%s] [async thread] Enqueued new nav result"), owner ? *owner->GetName() : *FString("Unknown"));
+#endif //DEBUG_DoNAI_THREADS*/
 	}
 
 }

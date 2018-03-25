@@ -17,6 +17,7 @@
 #include "DonNavigatorInterface.h"
 #include "DonAINavigationPrivatePCH.h"
 
+
 UDonNavigator::UDonNavigator(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 

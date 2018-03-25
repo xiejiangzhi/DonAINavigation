@@ -14,6 +14,7 @@
 
 #include "BehaviorTree/BTTask_FlyTo.h"
 #include "../DonAINavigationPrivatePCH.h"
+
 #include "DonNavigatorInterface.h"
 
 #include "BehaviorTree/BlackboardComponent.h"
@@ -80,21 +81,30 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	auto myMemory    =  (FBT_FlyToTarget*)NodeMemory;
 	auto blackboard  =  pawn ? pawn->GetController()->FindComponentByClass<UBlackboardComponent>() : NULL;
 
+	/*const float currentTime = GetWorld()->GetRealTimeSeconds();
+	const float lastRequestTimestamp = LastRequestTimestamps.FindOrAdd(pawn);
+	if (currentTime - lastRequestTimestamp < RequestThrottleInterval)
+		return EBTNodeResult::Failed; // throttled
+	else
+		LastRequestTimestamps.Add(pawn, currentTime); //LastRequestTimestamp = currentTime;
+		*/
 	NavigationManager =  UDonNavigationHelper::DonNavigationManagerForActor(pawn);
+	if (NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
+		return EBTNodeResult::Failed; // early exit instead of going through the manager's internal checks and fallback via HandleTaskFailure (which isn't appropriate here)
 	
 	// Validate internal state:
 	if (!pawn || !myMemory || !blackboard || !NavigationManager)
 	{
 		UE_LOG(DoNNavigationLog, Log, TEXT("BTTask_FlyTo has invalid data for AI Pawn or NodeMemory or NavigationManager. Unable to proceed."));
 
-		return HandleTaskFailure(OwnerComp, blackboard);
+		return HandleTaskFailure(OwnerComp, NodeMemory, blackboard);
 	}
 	
 	// Validate blackboard key data:
 	if(FlightLocationKey.SelectedKeyType != UBlackboardKeyType_Vector::StaticClass())
 	{
 		UE_LOG(DoNNavigationLog, Log, TEXT("Invalid FlightLocationKey. Expected Vector type, found %s"), *(FlightLocationKey.SelectedKeyType ? FlightLocationKey.SelectedKeyType->GetName() : FString("?")));
-		return HandleTaskFailure(OwnerComp, blackboard);
+		return HandleTaskFailure(OwnerComp, NodeMemory, blackboard);
 	}
 
 	// Prepare input:
@@ -124,7 +134,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 		return EBTNodeResult::InProgress;
 	}
 	else
-		return HandleTaskFailure(OwnerComp, blackboard);
+		return HandleTaskFailure(OwnerComp, NodeMemory, blackboard);
 }
 
 void UBTTask_FlyTo::AbortPathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
@@ -228,7 +238,10 @@ void UBTTask_FlyTo::Pathfinding_OnDynamicCollisionAlert(const FDonNavigationDyna
 
 void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
-	FBT_FlyToTarget* myMemory = (FBT_FlyToTarget*)NodeMemory;
+	FBT_FlyToTarget* myMemory = (FBT_FlyToTarget*)NodeMemory;	
+
+	APawn* pawn = OwnerComp.GetAIOwner()->GetPawn();
+	NavigationManager = UDonNavigationHelper::DonNavigationManagerForActor(pawn);	
 
 	if (EDonNavigationQueryStatus::InProgress == myMemory->QueryResults.QueryStatus)
 		return;
@@ -272,9 +285,13 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 	case EDonNavigationQueryStatus::QueryHasNoSolution:
 	case EDonNavigationQueryStatus::TimedOut:
 	case EDonNavigationQueryStatus::Failure:
-		HandleTaskFailureAndExit(OwnerComp);
+		HandleTaskFailureAndExit(OwnerComp, NodeMemory);
 		break;
-	}	
+
+	default: // currently covers "Unscheduled" which in turn is acting as the "In Progress" state in the current flow
+		if (!NavigationManager->HasTask(pawn))
+			HandleTaskFailureAndExit(OwnerComp, NodeMemory);
+	}
 }
 
 void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_FlyToTarget* MyMemory, float DeltaSeconds)
@@ -286,9 +303,9 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 	if (DebugParams.bVisualizePawnAsVoxels)
 		NavigationManager->Debug_DrawVoxelCollisionProfile(Cast<UPrimitiveComponent>(pawn->GetRootComponent()));
 
-	if (!ensure(queryResults.PathSolutionOptimized.IsValidIndex(MyMemory->solutionTraversalIndex)))
+	if (!queryResults.PathSolutionOptimized.IsValidIndex(MyMemory->solutionTraversalIndex))
 	{
-		HandleTaskFailureAndExit(OwnerComp); // observed after recent multi-threading rewrite. Need to watch this branch closely and understand why it occurs!
+		HandleTaskFailureAndExit(OwnerComp, (uint8*) (MyMemory)); // observed after recent multi-threading rewrite. Need to watch this branch closely and understand why it occurs!
 		return;
 	}
 	
@@ -329,7 +346,7 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 
 			// Inform the pawn owner that we're stopping locomotion (having reached the destination!)
 			if (MyMemory->bIsANavigator)
-				IDonNavigator::Execute_OnLocomotionEnd(pawn);
+				IDonNavigator::Execute_OnLocomotionEnd(pawn, true /*success*/);
 
 			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 
@@ -348,7 +365,7 @@ void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_Fl
 			{
 				if (!MyMemory->Metadata.OwnerComp.IsValid()) // edge case identified during high-speed time dilation. Need to gain a better understanding of exactly what triggers this issue.
 				{
-					HandleTaskFailureAndExit(OwnerComp);
+					HandleTaskFailureAndExit(OwnerComp, (uint8*)MyMemory);
 					return;
 				}
 
@@ -379,30 +396,39 @@ void UBTTask_FlyTo::OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* Nod
 	Super::OnTaskFinished(OwnerComp, NodeMemory, TaskResult);
 }
 
-EBTNodeResult::Type UBTTask_FlyTo::HandleTaskFailure(UBehaviorTreeComponent& OwnerComp, UBlackboardComponent* Blackboard)
+EBTNodeResult::Type UBTTask_FlyTo::HandleTaskFailure(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, UBlackboardComponent* Blackboard)
 {
+	AbortPathfindingRequest(OwnerComp, NodeMemory);
+
+	auto myMemory = NodeMemory ? reinterpret_cast<FBT_FlyToTarget*> (NodeMemory) : nullptr;
+	if (!Blackboard)
+		return EBTNodeResult::Failed;	
+
+	bool bOverallStatus = false;
 	if (bTeleportToDestinationUponFailure)
 	{
 		const bool bWrapUpLatentTask = false;
-		TeleportAndExit(OwnerComp, bWrapUpLatentTask);
+		bOverallStatus = TeleportAndExit(OwnerComp, bWrapUpLatentTask);
+	}
+
+	Blackboard->SetValueAsBool(FlightResultKey.SelectedKeyName, false);	
+	Blackboard->SetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName, !Blackboard->GetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName));
+
+	if (myMemory->bIsANavigator)
+		IDonNavigator::Execute_OnLocomotionEnd(OwnerComp.GetAIOwner()->GetPawn(), bOverallStatus);
+
+	if(bOverallStatus)
 		return EBTNodeResult::Succeeded;
-	}
-
-	if (Blackboard)
-	{
-		Blackboard->SetValueAsBool(FlightResultKey.SelectedKeyName, false);
-		Blackboard->SetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName, !Blackboard->GetValueAsBool(KeyToFlipFlopWhenTaskExits.SelectedKeyName));
-	}
-
-	return EBTNodeResult::Failed;
+	else
+		return EBTNodeResult::Failed;
 }
 
-void UBTTask_FlyTo::HandleTaskFailureAndExit(UBehaviorTreeComponent& OwnerComp)
+void UBTTask_FlyTo::HandleTaskFailureAndExit(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	auto pawn = OwnerComp.GetAIOwner()->GetPawn();
 	UBlackboardComponent* blackboard = pawn && pawn->GetController() ? pawn->GetController()->FindComponentByClass<UBlackboardComponent>() : nullptr;
 
-	if (HandleTaskFailure(OwnerComp, blackboard) == EBTNodeResult::Failed)
+	if (HandleTaskFailure(OwnerComp, NodeMemory, blackboard) == EBTNodeResult::Failed)
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 	else
 		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
@@ -446,7 +472,7 @@ EBlackboardNotificationResult UBTTask_FlyTo::OnBlackboardValueChange(const UBlac
 EBTNodeResult::Type UBTTask_FlyTo::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {	
 	// safely abort nav task before we leave
-	AbortPathfindingRequest(OwnerComp, NodeMemory);	
+	AbortPathfindingRequest(OwnerComp, NodeMemory);
 
 	APawn* pawn = OwnerComp.GetAIOwner()->GetPawn();
 	FBT_FlyToTarget* myMemory = (FBT_FlyToTarget*)NodeMemory;
@@ -490,19 +516,25 @@ FName UBTTask_FlyTo::GetNodeIconName() const
 
 #endif	// WITH_EDITOR
 
-void UBTTask_FlyTo::TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWrapUpLatentTask /*= true*/)
+bool UBTTask_FlyTo::TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWrapUpLatentTask /*= true*/)
 {
 	bool bTeleportSuccess = false;
 	auto pawn = OwnerComp.GetAIOwner()->GetPawn();
 	auto blackboard = pawn ? pawn->GetController()->FindComponentByClass<UBlackboardComponent>() : nullptr;
 
-	GEngine->AddOnScreenDebugMessage(-1, 15.f, FColor::White, FString::Printf(TEXT("%s teleported, being unable to find pathfind aerially!"), pawn ? *pawn->GetName() : *FString("")));
-
 	if (blackboard)
 	{
 		FVector flightDestination = blackboard->GetValueAsVector(FlightLocationKey.SelectedKeyName);
-		pawn->SetActorLocation(flightDestination, false);
-		bTeleportSuccess = true;
+		NavigationManager = UDonNavigationHelper::DonNavigationManagerForActor(pawn);
+
+		bool bLocationValid = !NavigationManager->IsLocationBeneathLandscape(flightDestination);
+		if(bLocationValid)
+		{
+			FVector flightDestination = blackboard->GetValueAsVector(FlightLocationKey.SelectedKeyName);
+			pawn->SetActorLocation(flightDestination, false);
+			GEngine->AddOnScreenDebugMessage(-1, 15.f, FColor::White, FString::Printf(TEXT("%s teleported, being unable to find pathfind aerially!"), pawn ? *pawn->GetName() : *FString("")));
+			bTeleportSuccess = true;
+		}
 	}
 
 	if (bWrapUpLatentTask)
@@ -512,4 +544,9 @@ void UBTTask_FlyTo::TeleportAndExit(UBehaviorTreeComponent& OwnerComp, bool bWra
 		else
 			FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 	}
+
+	return bTeleportSuccess;
 }
+
+//float UBTTask_FlyTo::LastRequestTimestamp;
+const float UBTTask_FlyTo::RequestThrottleInterval = 0.25f;

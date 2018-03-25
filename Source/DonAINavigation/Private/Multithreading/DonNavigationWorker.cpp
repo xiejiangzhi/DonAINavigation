@@ -61,8 +61,8 @@ uint32 FDonNavigationWorker::Run()
 
 	while (StopTaskCounter.GetValue() == 0)
 	{
-		Manager->ReceiveAsyncNavigationTasks();
-		Manager->ReceiveAsyncAbortRequests();
+		//Manager->ReceiveAsyncAbortRequests();
+		Manager->ReceiveAsyncNavigationTasks();		
 		Manager->ReceiveAsyncCollisionTasks();
 
 		SolveNavigationTasks();
