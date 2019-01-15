@@ -998,8 +998,8 @@ public:
 		return VolumeAtSafe(x, y, z);
 	}
 
-	/* Clamps a vector within the navigation bounds, as defined by the grid configuration of the navigation object you've placed in the map,
-	 *  brought in by a margin of InnerMarginOffset */
+	/** Clamps a vector within the navigation bounds, as defined by the grid configuration of the navigation object you've placed in the map,
+	 *   brought in by a margin of InnerMarginOffset when clamping downward to prevent rounding errors */
 	UFUNCTION(BlueprintPure, Category = "DoN Navigation")
 	FVector ClampLocationToNavigableWorld(FVector DesiredLocation, float InnerMarginOffset = 0.001f)
 	{
@@ -1007,11 +1007,11 @@ public:
 			return DesiredLocation;
 
 		FVector origin = GetActorLocation();
-		// We bring the clamped vector in by an extra innerMarginOffset cm. Necessary because VolumeIdAt does a float-to-int rounding, and thus clamping
-		//  to a max world dimension would otherwise round to an invalid index (e.g. rounding to index 100 instead of 99 in a 100-voxel world)
-		float xClamped = FMath::Clamp(DesiredLocation.X, origin.X + innerMarginOffset, origin.X + XGridSize * VoxelSize - innerMarginOffset);
-		float yClamped = FMath::Clamp(DesiredLocation.Y, origin.Y + innerMarginOffset, origin.Y + YGridSize * VoxelSize - innerMarginOffset);
-		float zClamped = FMath::Clamp(DesiredLocation.Z, origin.Z + innerMarginOffset, origin.Z + ZGridSize * VoxelSize - innerMarginOffset);
+		// When clamping down, bring the vector in by an extra InnerMarginOffset cm. Necessary because VolumeIdAt does a float-to-int rounding, and thus clamping
+		//  to a max world dimension would otherwise round to an invalid index (e.g. rounding 100.5 to invalid index 100 instead of 99 in a 100-voxel world)
+		float xClamped = FMath::Clamp(DesiredLocation.X, origin.X, origin.X + XGridSize * VoxelSize - InnerMarginOffset);
+		float yClamped = FMath::Clamp(DesiredLocation.Y, origin.Y, origin.Y + YGridSize * VoxelSize - InnerMarginOffset);
+		float zClamped = FMath::Clamp(DesiredLocation.Z, origin.Z, origin.Z + ZGridSize * VoxelSize - InnerMarginOffset);
 
 		return FVector(xClamped, yClamped, zClamped);
 	}
