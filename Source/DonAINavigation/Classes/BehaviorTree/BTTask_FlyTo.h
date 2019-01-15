@@ -61,6 +61,8 @@ struct FBT_FlyToTarget
 
 	FVector TargetLocation;
 
+	AActor* TargetActor;
+
 	FDelegateHandle BBObserverDelegateHandle;
 
 	uint32 bTargetLocationChanged : 1;
@@ -73,6 +75,7 @@ struct FBT_FlyToTarget
 		Metadata = FBT_FlyToTarget_Metadata();
 		bSolutionInvalidatedByDynamicObstacle = false;
 		bTargetLocationChanged = false;
+		TargetActor = nullptr;
 	}
 };
 
@@ -105,7 +108,7 @@ public:
 
 	// Behavior Tree Input:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
-	FBlackboardKeySelector FlightLocationKey;	
+	FBlackboardKeySelector FlightGoalKey;
 
 	/* Optional: Useful in somecases where you want failure or success of a task to automatically update a particular blackboard key*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "DoN Navigation")
@@ -164,6 +167,8 @@ protected:
 	void AbortPathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);
 
 	void TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_FlyToTarget* MyMemory, float DeltaSeconds);
+
+	bool CheckTargetMoved(FBT_FlyToTarget* MyMemory);
 
 	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
 
