@@ -63,12 +63,16 @@ struct FBT_FlyToTarget
 
 	AActor* TargetActor;
 
+	/* Whether this is a repath due to an actor target having moved */
+	bool isMovingTargetRepath = false;
+
 	FDelegateHandle BBObserverDelegateHandle;
 
 	uint32 bTargetLocationChanged : 1;
 
 	void Reset()
 	{	
+		isMovingTargetRepath = false;
 		solutionTraversalIndex = 0;
 		QueryResults = FDoNNavigationQueryData();
 		QueryParams = FDoNNavigationQueryParams();
@@ -162,7 +166,7 @@ protected:
 
 	FBT_FlyToTarget* TaskMemoryFromGenericPayload(void* GenericPayload);
 
-	EBTNodeResult::Type SchedulePathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);	
+	EBTNodeResult::Type SchedulePathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, bool isMovingTargetRepath = false);	
 
 	void AbortPathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);
 

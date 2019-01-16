@@ -76,7 +76,7 @@ EBTNodeResult::Type UBTTask_FlyTo::ExecuteTask(UBehaviorTreeComponent& OwnerComp
 	return NodeResult;
 }
 
-EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory,  bool isMovingTargetRepath)
 {
 	auto pawn        =  OwnerComp.GetAIOwner()->GetPawn();
 	auto myMemory    =  (FBT_FlyToTarget*)NodeMemory;
@@ -115,6 +115,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	myMemory->QueryParams = QueryParams;
 	myMemory->QueryParams.CustomDelegatePayload = &myMemory->Metadata;
 	myMemory->bIsANavigator = pawn->GetClass()->ImplementsInterface(UDonNavigator::StaticClass());
+	myMemory->isMovingTargetRepath = isMovingTargetRepath;
 
 	FVector flightDestination;
 	// Prepare location as Vector:
@@ -233,6 +234,11 @@ void UBTTask_FlyTo::Pathfinding_OnFinish(const FDoNNavigationQueryData& Data)
 		return;
 	}
 
+	// If we're a moving target repath, then skip the first index because the first index will generally just be 
+	//  from the pawn start to the closest nav voxel and may cause us to move backwards.
+	if (myMemory->isMovingTargetRepath && Data.PathSolutionOptimized.Num() >= 2)
+		myMemory->solutionTraversalIndex = 1;
+
 	// Inform pawn owner that we're about to start locomotion!
 	if (myMemory->bIsANavigator)
 	{
@@ -275,7 +281,7 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 	{
 		auto ownerComp = myMemory->Metadata.OwnerComp.Get();
 		AbortPathfindingRequest(*ownerComp, (uint8*)myMemory);
-		SchedulePathfindingRequest(*ownerComp, (uint8*)myMemory);
+		SchedulePathfindingRequest(*ownerComp, (uint8*)myMemory, true);
 		return;
 	}
 
@@ -330,7 +336,7 @@ void UBTTask_FlyTo::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemor
 bool UBTTask_FlyTo::CheckTargetMoved(FBT_FlyToTarget* MyMemory)
 {
 	// If my target is an actor actor and has moved out of the path tolerance, I should recalculate a new path towards it:
-	return MyMemory->TargetActor != nullptr && FVector::DistSquared(MyMemory->TargetLocation, MyMemory->TargetActor->GetActorLocation()) >= FMath::Square(this->RecalculatePathTolerance);
+	return MyMemory->TargetActor != nullptr && bRecalcPathOnDestinationChanged && FVector::DistSquared(MyMemory->TargetLocation, MyMemory->TargetActor->GetActorLocation()) >= FMath::Square(this->RecalculatePathTolerance);
 }
 
 void UBTTask_FlyTo::TickPathNavigation(UBehaviorTreeComponent& OwnerComp, FBT_FlyToTarget* MyMemory, float DeltaSeconds)
