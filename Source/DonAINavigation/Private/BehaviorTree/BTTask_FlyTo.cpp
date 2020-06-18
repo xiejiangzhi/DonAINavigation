@@ -90,7 +90,7 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 		LastRequestTimestamps.Add(pawn, currentTime); //LastRequestTimestamp = currentTime;
 		*/
 	NavigationManager =  UDonNavigationHelper::DonNavigationManagerForActor(pawn);
-	if (NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
+	if (NavigationManager && NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
 		return EBTNodeResult::Failed; // early exit instead of going through the manager's internal checks and fallback via HandleTaskFailure (which isn't appropriate here)
 	
 	// Validate internal state:
