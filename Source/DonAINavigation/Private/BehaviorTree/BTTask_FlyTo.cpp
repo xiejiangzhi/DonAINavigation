@@ -89,16 +89,15 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 		LastRequestTimestamps.Add(pawn, currentTime); //LastRequestTimestamp = currentTime;
 		*/
 	NavigationManager =  UDonNavigationHelper::DonNavigationManagerForActor(pawn);
-	if (NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
-		return EBTNodeResult::Failed; // early exit instead of going through the manager's internal checks and fallback via HandleTaskFailure (which isn't appropriate here)
-	
 	// Validate internal state:
 	if (!pawn || !myMemory || !blackboard || !NavigationManager)
 	{
 		UE_LOG(DoNNavigationLog, Log, TEXT("BTTask_FlyTo has invalid data for AI Pawn or NodeMemory or NavigationManager. Unable to proceed."));
-
 		return HandleTaskFailure(OwnerComp, NodeMemory, blackboard);
 	}
+
+	if (NavigationManager->HasTask(pawn) && !QueryParams.bForceRescheduleQuery)
+		return EBTNodeResult::Failed; // early exit instead of going through the manager's internal checks and fallback via HandleTaskFailure (which isn't appropriate here)
 	
 	// Validate blackboard key data:
 	if(FlightLocationKey.SelectedKeyType != UBlackboardKeyType_Vector::StaticClass())
