@@ -92,7 +92,18 @@ EBTNodeResult::Type UBTTask_FlyTo::SchedulePathfindingRequest(UBehaviorTreeCompo
 	// Validate internal state:
 	if (!pawn || !myMemory || !blackboard || !NavigationManager)
 	{
-		UE_LOG(DoNNavigationLog, Log, TEXT("BTTask_FlyTo has invalid data for AI Pawn or NodeMemory or NavigationManager. Unable to proceed."));
+		if(!pawn){
+			UE_LOG(DoNNavigationLog, Log, TEXT("Pawn invalid"));
+		}
+		if(!myMemory){
+			UE_LOG(DoNNavigationLog, Log, TEXT("NodeMemory invalid"));
+		}
+		if(!blackboard){
+			UE_LOG(DoNNavigationLog, Log, TEXT("Blackboard invalid"));
+		}
+		if(!NavigationManager){
+			UE_LOG(DoNNavigationLog, Log, TEXT("NavigationManager invalid"));
+		}
 		return HandleTaskFailure(OwnerComp, NodeMemory, blackboard);
 	}
 
