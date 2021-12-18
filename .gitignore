@@ -6,6 +6,8 @@
 # Windows image file caches
 Thumbs.db
 ehthumbs.db
+Binaries/
+Intermediate/
 
 #CMake
 cmake-build-debug/
