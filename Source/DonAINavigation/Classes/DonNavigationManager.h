@@ -362,10 +362,10 @@ struct FDoNNavigationQueryData
 	TWeakObjectPtr<class UPrimitiveComponent> CollisionComponent;
 
 	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
-	FVector Origin;
+	FVector Origin = FVector::ZeroVector;
 
 	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
-	FVector Destination;	
+	FVector Destination = FVector::ZeroVector;	
 
 	UPROPERTY(BlueprintReadOnly, Category = "DoN Navigation")
 	FDoNNavigationQueryParams QueryParams;
