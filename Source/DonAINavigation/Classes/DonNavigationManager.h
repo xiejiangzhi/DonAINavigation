@@ -1009,9 +1009,9 @@ public:
 		FVector origin = GetActorLocation();
 		// When clamping down, bring the vector in by an extra InnerMarginOffset cm. Necessary because VolumeIdAt does a float-to-int rounding, and thus clamping
 		//  to a max world dimension would otherwise round to an invalid index (e.g. rounding 100.5 to invalid index 100 instead of 99 in a 100-voxel world)
-		float xClamped = FMath::Clamp(DesiredLocation.X, origin.X, origin.X + XGridSize * VoxelSize - InnerMarginOffset);
-		float yClamped = FMath::Clamp(DesiredLocation.Y, origin.Y, origin.Y + YGridSize * VoxelSize - InnerMarginOffset);
-		float zClamped = FMath::Clamp(DesiredLocation.Z, origin.Z, origin.Z + ZGridSize * VoxelSize - InnerMarginOffset);
+		double xClamped = FMath::Clamp(DesiredLocation.X, origin.X, origin.X + static_cast<float>(XGridSize) * VoxelSize - InnerMarginOffset);
+		double yClamped = FMath::Clamp(DesiredLocation.Y, origin.Y, origin.Y + static_cast<float>(YGridSize) * VoxelSize - InnerMarginOffset);
+		double zClamped = FMath::Clamp(DesiredLocation.Z, origin.Z, origin.Z + static_cast<float>(ZGridSize) * VoxelSize - InnerMarginOffset);
 
 		return FVector(xClamped, yClamped, zClamped);
 	}
@@ -1024,9 +1024,9 @@ public:
 
 		const FVector origin = GetActorLocation();
 
-		return  DesiredLocation.X >= origin.X && DesiredLocation.X <= (origin.X + XGridSize * VoxelSize) &&
-					DesiredLocation.Y >= origin.Y && DesiredLocation.Y <= (origin.Y + YGridSize * VoxelSize) &&
-					DesiredLocation.Z >= origin.Z && DesiredLocation.Z <= (origin.Z + ZGridSize * VoxelSize);
+		return  DesiredLocation.X >= origin.X && DesiredLocation.X <= (    origin.X + static_cast<float>(XGridSize) * VoxelSize) &&
+					DesiredLocation.Y >= origin.Y && DesiredLocation.Y <= (origin.Y + static_cast<float>(YGridSize) * VoxelSize) &&
+					DesiredLocation.Z >= origin.Z && DesiredLocation.Z <= (origin.Z + static_cast<float>(ZGridSize) * VoxelSize);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
