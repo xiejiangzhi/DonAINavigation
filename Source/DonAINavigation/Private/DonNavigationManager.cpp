@@ -559,7 +559,7 @@ static FString GetMeshAssetName(UPrimitiveComponent* Mesh)
 	if (staticMesh)
 		assetName = staticMesh->GetStaticMesh()->GetName();
 	else if (skeletalMesh)
-		assetName = skeletalMesh->SkeletalMesh->GetName();
+		assetName = skeletalMesh->GetSkeletalMeshAsset()->GetName();
 	
 	return assetName;
 }
